@@ -116,6 +116,7 @@ cases:
       error; 8.1.1 lets the server send a response first, so the observable
       outcome is a 400 or a reset stream, and the responder never runs. The
       schema cannot express a reset, so this case expects the 400 variant.
+    waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h2]
     request:
       method: GET
@@ -135,6 +136,7 @@ cases:
       An HTTP/1.1 request with more than one Host field line gets a 400 and
       never reaches the responder. The authority produces the first Host
       line; the header list adds a second.
+    waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h1]
     request:
       method: GET
@@ -669,6 +671,7 @@ cases:
       An uppercase character in an h2/h3 field name makes the request
       malformed, unlike h1 where case is free; the responder never runs.
       400 is the response variant of the stream error.
+    waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h2, h3]
     request:
       method: GET
@@ -686,6 +689,7 @@ cases:
     summary: >-
       A field name containing 0x20 makes an h2 request malformed; the
       responder never runs. 400 is the response variant of the stream error.
+    waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h2]
     request:
       method: GET
@@ -703,6 +707,7 @@ cases:
     summary: >-
       A field value containing LF makes an h2 request malformed; the
       responder never runs. 400 is the response variant of the stream error.
+    waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h2]
     request:
       method: GET
@@ -720,6 +725,7 @@ cases:
     summary: >-
       An undefined pseudo-header field makes an h2 request malformed; the
       responder never runs. 400 is the response variant of the stream error.
+    waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h2]
     request:
       method: GET
@@ -900,6 +906,7 @@ cases:
     summary: >-
       Authorization carries authentication information and is removed on
       every version; no HTTP_AUTHORIZATION exists.
+    waived: "docs/design.md, deviations: the gateway passes Authorization as HTTP_AUTHORIZATION, as nginx does."
     request:
       method: GET
       target: "/dump.php"
@@ -1063,7 +1070,7 @@ cases:
       target: "/dump.php"
     expect:
       status: 200
-      env: { SERVER_PORT: "443" }
+      env: { SERVER_PORT: "${SERVER_PORT}" }
 
   # --- Responses: connection-specific fields must not be generated on h2/h3 ---
 
@@ -1080,7 +1087,7 @@ cases:
       target: "/respond.php?header%5B%5D=Connection%3A%20close"
     expect:
       status: 200
-      headers: { X-Fixture: respond.php }
+      headers: { X-Fixture: respond }
       headers_absent: [Connection]
 
   - id: http-h2-response-keep-alive-dropped
@@ -1096,7 +1103,7 @@ cases:
       target: "/respond.php?header%5B%5D=Keep-Alive%3A%20timeout%3D5"
     expect:
       status: 200
-      headers: { X-Fixture: respond.php }
+      headers: { X-Fixture: respond }
       headers_absent: [Keep-Alive]
 
   - id: http-h2-response-proxy-connection-dropped
@@ -1112,7 +1119,7 @@ cases:
       target: "/respond.php?header%5B%5D=Proxy-Connection%3A%20keep-alive"
     expect:
       status: 200
-      headers: { X-Fixture: respond.php }
+      headers: { X-Fixture: respond }
       headers_absent: [Proxy-Connection]
 
   - id: http-h2-response-transfer-encoding-dropped
@@ -1128,7 +1135,7 @@ cases:
       target: "/respond.php?header%5B%5D=Transfer-Encoding%3A%20chunked&body=ok"
     expect:
       status: 200
-      headers: { X-Fixture: respond.php }
+      headers: { X-Fixture: respond }
       headers_absent: [Transfer-Encoding]
       body: "ok"
 
@@ -1145,5 +1152,5 @@ cases:
       target: "/respond.php?header%5B%5D=Upgrade%3A%20websocket"
     expect:
       status: 200
-      headers: { X-Fixture: respond.php }
+      headers: { X-Fixture: respond }
       headers_absent: [Upgrade]

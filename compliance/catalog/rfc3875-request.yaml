@@ -74,7 +74,7 @@ cases:
       script: dump.php
     expect:
       status: 200
-      env: { SERVER_PORT: "443" }
+      env: { SERVER_PORT: "${SERVER_PORT}" }
 
   # --- 4.1.16 SERVER_PROTOCOL ---
   - id: rfc3875-req-server-protocol-grammar
@@ -463,6 +463,7 @@ cases:
     source: "RFC 3875 section 3.3"
     level: MUST
     summary: SCRIPT_NAME is the request path prefix that selects the script (/app/dump.php), so the Script-URI re-runs the same script.
+    waived: "docs/design.md: SCRIPT_NAME is always /<script>; the gateway does not know the prefix the caller mounted the handler under."
     request:
       method: GET
       target: "/app/dump.php/x"

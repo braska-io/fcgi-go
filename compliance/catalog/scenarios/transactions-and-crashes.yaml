@@ -100,6 +100,7 @@ scenarios:
           - request: { method: GET, target: "/respond?sleep_ms=1500&body=4" }
             expect: { status: 200 }
           - request: { method: GET, target: "/respond?body=5" }
+            delay_ms: 200
             route: { timeout_ms: 400 }
             expect: { status: 503, reaches_responder: false, duration_min_ms: 300, duration_max_ms: 1200 }
 
@@ -119,7 +120,8 @@ scenarios:
           - request: { method: GET, target: "/respond?sleep_ms=500&body=4" }
             expect: { status: 200 }
           - request: { method: GET, target: "/respond?body=5" }
-            expect: { status: 200, body: "5", duration_min_ms: 300 }
+            delay_ms: 200
+            expect: { status: 200, body: "5", duration_min_ms: 100 }
 
   - id: gw-slow-responder-buffered
     tier: gateway
