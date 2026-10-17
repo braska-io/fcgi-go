@@ -7,6 +7,7 @@
 //   case=sleep                set_time_limit(1), sleep 2 s, "survived"
 //   case=restart              set_time_limit(1) twice around 0.7 s CPU each
 //   case=zero                 set_time_limit(0), burn 1.5 s CPU
+//   case=after_flush          set_time_limit(1), flush 8192 bytes, burn 3 s CPU
 require __DIR__ . '/../../_fixture.php';
 require __DIR__ . '/../pdo/_db.php';
 $q = fixture('app/lifecycle/timelimit');
@@ -51,6 +52,13 @@ case 'restart':
 case 'zero':
     set_time_limit(0);
     burn_cpu(1.5);
+    echo 'survived';
+    break;
+case 'after_flush':
+    set_time_limit(1);
+    echo str_repeat('x', 8192);
+    flush();
+    burn_cpu(3);
     echo 'survived';
     break;
 default:
