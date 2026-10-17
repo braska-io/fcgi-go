@@ -53,7 +53,7 @@ Those rows vary between runs by up to a factor of two.
 
 <!-- results:start -->
 
-Run on 2026-10-17, fcgi-go `db5ddc2`. Host: darwin/arm64, 16 CPUs. Docker: docker-desktop 29.8.0, Docker Desktop, 16 CPUs, 24 GiB. Each cell ran 10s after a 2s warm-up.
+Run on 2026-10-17, fcgi-go `2301cb5`. Host: darwin/arm64, 16 CPUs. Docker: docker-desktop 29.8.0, Docker Desktop, 16 CPUs, 24 GiB. Each cell ran 10s after a 2s warm-up.
 
 ### hello
 
@@ -61,14 +61,14 @@ A script that prints 3 bytes: the cost of the proxy itself.
 
 | Clients | Proxy | req/s | MiB/s | p50 | p99 | max | proxy CPU per req | proxy peak memory | errors |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | nginx | 4512 | 0.0 | 215 µs | 336 µs | 5.3 ms | 66 µs | 9 MiB | 0 |
-| 1 | fcgi-go | 3535 | 0.0 | 275 µs | 427 µs | 3.5 ms | 137 µs | 12 MiB | 0 |
-| 16 | nginx | 20349 | 0.1 | 793 µs | 1.2 ms | 5.0 ms | 96 µs | 10 MiB | 0 |
-| 16 | fcgi-go | 19808 | 0.1 | 772 µs | 1.6 ms | 29.4 ms | 99 µs | 19 MiB | 0 |
-| 64 | nginx | 25776 | 0.1 | 2.0 ms | 5.7 ms | 9.3 ms | 77 µs | 11 MiB | 0 |
-| 64 | fcgi-go | 24480 | 0.1 | 2.4 ms | 5.2 ms | 107.2 ms | 78 µs | 39 MiB | 0 |
-| 256 | nginx | 23758 | 0.1 | 10.2 ms | 14.5 ms | 66.8 ms | 84 µs | 14 MiB | 0 |
-| 256 | fcgi-go | 26654 | 0.1 | 9.4 ms | 12.5 ms | 60.7 ms | 74 µs | 61 MiB | 0 |
+| 1 | nginx | 4560 | 0.0 | 214 µs | 331 µs | 3.6 ms | 66 µs | 9 MiB | 0 |
+| 1 | fcgi-go | 3516 | 0.0 | 278 µs | 427 µs | 6.1 ms | 137 µs | 14 MiB | 0 |
+| 16 | nginx | 19842 | 0.1 | 694 µs | 1.5 ms | 9.0 ms | 100 µs | 10 MiB | 0 |
+| 16 | fcgi-go | 19937 | 0.1 | 774 µs | 1.5 ms | 14.8 ms | 99 µs | 19 MiB | 0 |
+| 64 | nginx | 25620 | 0.1 | 2.0 ms | 5.7 ms | 25.1 ms | 77 µs | 10 MiB | 0 |
+| 64 | fcgi-go | 24464 | 0.1 | 2.5 ms | 5.1 ms | 37.3 ms | 80 µs | 39 MiB | 0 |
+| 256 | nginx | 23735 | 0.1 | 10.0 ms | 14.5 ms | 63.8 ms | 83 µs | 14 MiB | 0 |
+| 256 | fcgi-go | 26685 | 0.1 | 9.4 ms | 13.4 ms | 34.5 ms | 75 µs | 61 MiB | 0 |
 
 ### io-20ms
 
@@ -76,14 +76,14 @@ A script that waits 20 ms on I/O; 16 php-fpm children cap it at 800 req/s.
 
 | Clients | Proxy | req/s | MiB/s | p50 | p99 | max | proxy CPU per req | proxy peak memory | errors |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | nginx | 46 | 0.0 | 21.4 ms | 27.3 ms | 29.3 ms | 227 µs | 11 MiB | 0 |
-| 1 | fcgi-go | 46 | 0.0 | 21.5 ms | 27.4 ms | 28.4 ms | 472 µs | 59 MiB | 0 |
-| 16 | nginx | 753 | 0.0 | 21.1 ms | 24.1 ms | 28.5 ms | 123 µs | 11 MiB | 0 |
-| 16 | fcgi-go | 751 | 0.0 | 21.2 ms | 23.5 ms | 27.0 ms | 172 µs | 60 MiB | 0 |
-| 64 | nginx | 780 | 0.0 | 81.7 ms | 85.2 ms | 90.7 ms | 101 µs | 12 MiB | 0 |
-| 64 | fcgi-go | 779 | 0.0 | 82.0 ms | 84.6 ms | 90.7 ms | 174 µs | 64 MiB | 0 |
-| 256 | nginx | 780 | 0.0 | 327.4 ms | 334.1 ms | 354.9 ms | 107 µs | 14 MiB | 0 |
-| 256 | fcgi-go | 779 | 0.0 | 327.6 ms | 334.6 ms | 356.6 ms | 194 µs | 84 MiB | 0 |
+| 1 | nginx | 46 | 0.0 | 21.4 ms | 28.2 ms | 30.2 ms | 251 µs | 11 MiB | 0 |
+| 1 | fcgi-go | 46 | 0.0 | 21.5 ms | 27.3 ms | 27.8 ms | 455 µs | 59 MiB | 0 |
+| 16 | nginx | 748 | 0.0 | 21.1 ms | 24.7 ms | 28.0 ms | 133 µs | 12 MiB | 0 |
+| 16 | fcgi-go | 751 | 0.0 | 21.1 ms | 24.4 ms | 30.9 ms | 185 µs | 60 MiB | 0 |
+| 64 | nginx | 778 | 0.0 | 81.9 ms | 86.2 ms | 96.9 ms | 116 µs | 11 MiB | 0 |
+| 64 | fcgi-go | 777 | 0.0 | 82.1 ms | 85.8 ms | 90.6 ms | 184 µs | 62 MiB | 0 |
+| 256 | nginx | 781 | 0.0 | 326.7 ms | 334.3 ms | 354.2 ms | 87 µs | 14 MiB | 0 |
+| 256 | fcgi-go | 777 | 0.0 | 328.2 ms | 334.2 ms | 339.8 ms | 175 µs | 81 MiB | 0 |
 
 ### page
 
@@ -91,14 +91,14 @@ A session, a 5 ms simulated query, 400 rows sorted and rendered to 60 KiB of HTM
 
 | Clients | Proxy | req/s | MiB/s | p50 | p99 | max | proxy CPU per req | proxy peak memory | errors |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | nginx | 145 | 7.5 | 6.8 ms | 9.1 ms | 11.6 ms | 284 µs | 10 MiB | 0 |
-| 1 | fcgi-go | 141 | 7.3 | 6.9 ms | 10.4 ms | 17.3 ms | 352 µs | 81 MiB | 0 |
-| 16 | nginx | 2050 | 106.2 | 6.5 ms | 23.3 ms | 85.6 ms | 182 µs | 11 MiB | 0 |
-| 16 | fcgi-go | 1603 | 83.1 | 6.6 ms | 69.0 ms | 156.3 ms | 249 µs | 49 MiB | 0 |
-| 64 | nginx | 1448 | 75.0 | 41.3 ms | 129.0 ms | 275.9 ms | 179 µs | 11 MiB | 0 |
-| 64 | fcgi-go | 1212 | 62.8 | 49.7 ms | 188.5 ms | 402.4 ms | 236 µs | 67 MiB | 0 |
-| 256 | nginx | 987 | 51.1 | 238.6 ms | 490.6 ms | 761.6 ms | 182 µs | 14 MiB | 0 |
-| 256 | fcgi-go | 1123 | 58.2 | 221.5 ms | 453.1 ms | 818.1 ms | 229 µs | 89 MiB | 0 |
+| 1 | nginx | 145 | 7.5 | 6.7 ms | 8.8 ms | 9.6 ms | 286 µs | 10 MiB | 0 |
+| 1 | fcgi-go | 143 | 7.4 | 6.8 ms | 9.2 ms | 9.9 ms | 364 µs | 82 MiB | 0 |
+| 16 | nginx | 2469 | 127.9 | 6.2 ms | 10.2 ms | 14.1 ms | 192 µs | 11 MiB | 0 |
+| 16 | fcgi-go | 2537 | 131.5 | 6.2 ms | 7.4 ms | 13.8 ms | 252 µs | 55 MiB | 0 |
+| 64 | nginx | 2753 | 142.7 | 23.1 ms | 25.3 ms | 30.6 ms | 203 µs | 11 MiB | 0 |
+| 64 | fcgi-go | 2795 | 144.8 | 22.8 ms | 24.8 ms | 37.9 ms | 226 µs | 68 MiB | 0 |
+| 256 | nginx | 2748 | 142.4 | 92.6 ms | 96.0 ms | 138.8 ms | 186 µs | 13 MiB | 29 (Get "http://localhost:55072/page.php": dial tcp [::1]:55072: connect: connection reset by peer) |
+| 256 | fcgi-go | 2795 | 144.8 | 91.4 ms | 93.9 ms | 112.3 ms | 230 µs | 91 MiB | 0 |
 
 ### upload-1m
 
@@ -106,14 +106,14 @@ A 1 MiB multipart upload that PHP stores and hashes.
 
 | Clients | Proxy | req/s | MiB/s | p50 | p99 | max | proxy CPU per req | proxy peak memory | errors |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | nginx | 88 | 88.5 | 11.2 ms | 13.7 ms | 22.7 ms | 2.4 ms | 11 MiB | 0 |
-| 1 | fcgi-go | 88 | 88.5 | 11.2 ms | 13.6 ms | 20.6 ms | 2.8 ms | 88 MiB | 0 |
-| 16 | nginx | 135 | 134.7 | 29.7 ms | 254.1 ms | 21.00 s | 4.0 ms | 19 MiB | 0 |
-| 16 | fcgi-go | 355 | 355.4 | 35.0 ms | 210.5 ms | 1.84 s | 2.5 ms | 51 MiB | 0 |
-| 64 | nginx | 349 | 349.2 | 130.4 ms | 708.2 ms | 4.18 s | 2.5 ms | 28 MiB | 0 |
-| 64 | fcgi-go | 262 | 261.9 | 124.7 ms | 785.4 ms | 5.54 s | 3.5 ms | 58 MiB | 0 |
-| 256 | nginx | 344 | 344.0 | 585.7 ms | 2.54 s | 3.55 s | 2.7 ms | 19 MiB | 0 |
-| 256 | fcgi-go | 342 | 341.9 | 569.8 ms | 2.75 s | 4.27 s | 3.2 ms | 80 MiB | 0 |
+| 1 | nginx | 89 | 88.9 | 11.2 ms | 13.5 ms | 20.7 ms | 3.0 ms | 12 MiB | 0 |
+| 1 | fcgi-go | 88 | 88.4 | 11.2 ms | 13.6 ms | 20.9 ms | 2.8 ms | 88 MiB | 0 |
+| 16 | nginx | 347 | 346.9 | 33.8 ms | 189.7 ms | 2.52 s | 3.7 ms | 15 MiB | 0 |
+| 16 | fcgi-go | 354 | 353.8 | 36.5 ms | 232.4 ms | 4.10 s | 2.5 ms | 55 MiB | 0 |
+| 64 | nginx | 332 | 332.4 | 143.5 ms | 812.2 ms | 21.42 s | 2.9 ms | 38 MiB | 0 |
+| 64 | fcgi-go | 344 | 344.2 | 101.9 ms | 1.66 s | 39.67 s | 2.9 ms | 67 MiB | 0 |
+| 256 | nginx | 332 | 331.8 | 524.8 ms | 3.71 s | 22.16 s | 2.6 ms | 23 MiB | 0 |
+| 256 | fcgi-go | 336 | 336.1 | 536.0 ms | 3.19 s | 9.28 s | 2.9 ms | 94 MiB | 0 |
 
 ### upload-16m
 
@@ -122,12 +122,12 @@ Each cell ran 30s.
 
 | Clients | Proxy | req/s | MiB/s | p50 | p99 | max | proxy CPU per req | proxy peak memory | errors |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | nginx | 6 | 90.9 | 176.5 ms | 201.4 ms | 207.0 ms | 52.3 ms | 14 MiB | 0 |
-| 1 | fcgi-go | 6 | 90.3 | 176.7 ms | 197.6 ms | 204.1 ms | 43.5 ms | 72 MiB | 0 |
-| 4 | nginx | 11 | 183.8 | 347.6 ms | 534.6 ms | 648.0 ms | 74.4 ms | 47 MiB | 0 |
-| 4 | fcgi-go | 17 | 264.5 | 237.2 ms | 418.1 ms | 820.9 ms | 39.9 ms | 72 MiB | 0 |
-| 16 | nginx | 22 | 350.9 | 572.0 ms | 3.51 s | 3.88 s | 49.1 ms | 123 MiB | 0 |
-| 16 | fcgi-go | 19 | 306.8 | 491.5 ms | 3.41 s | 7.49 s | 38.5 ms | 60 MiB | 0 |
+| 1 | nginx | 6 | 90.7 | 175.9 ms | 198.9 ms | 199.8 ms | 49.3 ms | 19 MiB | 0 |
+| 1 | fcgi-go | 6 | 90.7 | 176.1 ms | 197.9 ms | 198.0 ms | 45.7 ms | 78 MiB | 0 |
+| 4 | nginx | 15 | 239.5 | 242.1 ms | 475.6 ms | 554.1 ms | 63.3 ms | 44 MiB | 0 |
+| 4 | fcgi-go | 16 | 262.4 | 239.1 ms | 421.7 ms | 570.1 ms | 39.9 ms | 77 MiB | 0 |
+| 16 | nginx | 21 | 331.2 | 553.5 ms | 3.02 s | 3.48 s | 54.3 ms | 126 MiB | 0 |
+| 16 | fcgi-go | 22 | 359.5 | 522.9 ms | 2.80 s | 5.86 s | 37.1 ms | 62 MiB | 0 |
 
 ### download-1m
 
@@ -135,14 +135,14 @@ A 1 MiB generated download.
 
 | Clients | Proxy | req/s | MiB/s | p50 | p99 | max | proxy CPU per req | proxy peak memory | errors |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | nginx | 183 | 183.3 | 5.5 ms | 6.4 ms | 7.7 ms | 883 µs | 14 MiB | 0 |
-| 1 | fcgi-go | 178 | 178.3 | 5.6 ms | 6.7 ms | 14.5 ms | 932 µs | 54 MiB | 0 |
-| 16 | nginx | 203 | 203.4 | 74.5 ms | 181.1 ms | 900.7 ms | 585 µs | 25 MiB | 0 |
-| 16 | fcgi-go | 205 | 205.4 | 77.7 ms | 111.3 ms | 158.1 ms | 939 µs | 71 MiB | 0 |
-| 64 | nginx | 209 | 208.6 | 268.3 ms | 878.9 ms | 2.20 s | 456 µs | 56 MiB | 0 |
-| 64 | fcgi-go | 214 | 214.4 | 227.7 ms | 1.95 s | 3.26 s | 834 µs | 112 MiB | 0 |
-| 256 | nginx | 213 | 212.9 | 1.14 s | 2.63 s | 4.93 s | 479 µs | 192 MiB | 0 |
-| 256 | fcgi-go | 211 | 211.1 | 1.12 s | 2.98 s | 4.01 s | 827 µs | 282 MiB | 0 |
+| 1 | nginx | 188 | 187.7 | 5.3 ms | 6.2 ms | 13.3 ms | 863 µs | 13 MiB | 0 |
+| 1 | fcgi-go | 180 | 180.1 | 5.5 ms | 6.5 ms | 13.7 ms | 889 µs | 56 MiB | 0 |
+| 16 | nginx | 209 | 209.3 | 72.4 ms | 143.6 ms | 710.1 ms | 581 µs | 26 MiB | 0 |
+| 16 | fcgi-go | 211 | 211.0 | 75.4 ms | 136.0 ms | 200.1 ms | 827 µs | 72 MiB | 0 |
+| 64 | nginx | 210 | 210.0 | 254.2 ms | 926.4 ms | 1.99 s | 435 µs | 53 MiB | 0 |
+| 64 | fcgi-go | 214 | 213.6 | 240.3 ms | 1.90 s | 3.98 s | 807 µs | 125 MiB | 0 |
+| 256 | nginx | 192 | 191.7 | 1.21 s | 2.49 s | 3.55 s | 424 µs | 195 MiB | 0 |
+| 256 | fcgi-go | 197 | 196.9 | 1.25 s | 3.60 s | 5.25 s | 859 µs | 288 MiB | 0 |
 
 ### download-64m
 
@@ -151,12 +151,12 @@ Each cell ran 30s.
 
 | Clients | Proxy | req/s | MiB/s | p50 | p99 | max | proxy CPU per req | proxy peak memory | errors |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | nginx | 3 | 218.6 | 292.3 ms | 310.6 ms | 316.4 ms | 60.5 ms | 16 MiB | 0 |
-| 1 | fcgi-go | 3 | 208.3 | 306.5 ms | 352.8 ms | 352.8 ms | 34.8 ms | 68 MiB | 0 |
-| 4 | nginx | 3 | 216.8 | 1.18 s | 1.27 s | 1.58 s | 53.7 ms | 32 MiB | 0 |
-| 4 | fcgi-go | 3 | 217.9 | 1.12 s | 2.26 s | 2.32 s | 39.3 ms | 77 MiB | 0 |
-| 16 | nginx | 3 | 222.0 | 4.01 s | 11.70 s | 13.08 s | 45.0 ms | 96 MiB | 0 |
-| 16 | fcgi-go | 3 | 218.3 | 4.62 s | 7.22 s | 9.47 s | 37.2 ms | 144 MiB | 0 |
+| 1 | nginx | 3 | 217.6 | 291.1 ms | 324.8 ms | 330.6 ms | 71.5 ms | 16 MiB | 0 |
+| 1 | fcgi-go | 3 | 206.9 | 308.5 ms | 330.5 ms | 330.5 ms | 34.3 ms | 76 MiB | 0 |
+| 4 | nginx | 3 | 213.3 | 1.17 s | 1.65 s | 1.95 s | 54.9 ms | 32 MiB | 0 |
+| 4 | fcgi-go | 3 | 213.3 | 1.18 s | 1.25 s | 1.27 s | 39.2 ms | 85 MiB | 0 |
+| 16 | nginx | 3 | 194.1 | 4.01 s | 13.69 s | 17.68 s | 46.7 ms | 96 MiB | 0 |
+| 16 | fcgi-go | 3 | 198.4 | 4.72 s | 7.46 s | 9.07 s | 40.1 ms | 152 MiB | 0 |
 
 ### mixed
 
@@ -164,13 +164,13 @@ Each cell ran 30s.
 
 | Clients | Proxy | req/s | MiB/s | p50 | p99 | max | proxy CPU per req | proxy peak memory | errors |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | nginx | 84 | 13.6 | 6.5 ms | 178.3 ms | 193.0 ms | 360 µs | 11 MiB | 0 |
-| 1 | fcgi-go | 85 | 13.6 | 6.9 ms | 173.8 ms | 196.4 ms | 517 µs | 57 MiB | 0 |
-| 16 | nginx | 879 | 114.4 | 8.4 ms | 114.7 ms | 654.4 ms | 324 µs | 15 MiB | 0 |
-| 16 | fcgi-go | 875 | 114.0 | 7.9 ms | 81.1 ms | 509.5 ms | 402 µs | 59 MiB | 0 |
-| 64 | nginx | 969 | 128.3 | 45.8 ms | 230.1 ms | 850.0 ms | 336 µs | 17 MiB | 0 |
-| 64 | fcgi-go | 778 | 102.1 | 54.6 ms | 361.9 ms | 887.4 ms | 384 µs | 80 MiB | 0 |
-| 256 | nginx | 790 | 103.5 | 296.1 ms | 636.7 ms | 1.47 s | 359 µs | 34 MiB | 0 |
-| 256 | fcgi-go | 765 | 100.2 | 317.8 ms | 801.7 ms | 1.44 s | 402 µs | 102 MiB | 0 |
+| 1 | nginx | 101 | 15.9 | 6.7 ms | 24.0 ms | 29.7 ms | 431 µs | 11 MiB | 0 |
+| 1 | fcgi-go | 102 | 16.1 | 6.7 ms | 23.8 ms | 29.7 ms | 503 µs | 67 MiB | 0 |
+| 16 | nginx | 1458 | 193.0 | 7.6 ms | 26.2 ms | 45.0 ms | 383 µs | 13 MiB | 0 |
+| 16 | fcgi-go | 1498 | 198.2 | 7.4 ms | 24.2 ms | 61.7 ms | 403 µs | 61 MiB | 0 |
+| 64 | nginx | 1494 | 197.2 | 40.9 ms | 85.9 ms | 25.71 s | 541 µs | 18 MiB | 0 |
+| 64 | fcgi-go | 1878 | 245.6 | 31.4 ms | 66.0 ms | 350.3 ms | 368 µs | 83 MiB | 0 |
+| 256 | nginx | 1667 | 218.1 | 151.2 ms | 198.3 ms | 5.50 s | 480 µs | 32 MiB | 0 |
+| 256 | fcgi-go | 1861 | 244.4 | 135.3 ms | 174.6 ms | 4.84 s | 379 µs | 111 MiB | 0 |
 
 <!-- results:end -->
