@@ -199,7 +199,9 @@ func writeResponse(w http.ResponseWriter, r *http.Request, cfg *config, rep *rep
 		h["Content-Type"] = nil
 	}
 	bodyLen := rep.body.Len() - rep.parsed.BodyOffset
-	if h.Get("Content-Length") == "" && bodyAllowed(rep.parsed.Status) {
+	// HEAD: php-fpm sends no body, so a length computed from the spool would
+	// be 0 and contradict the GET response.
+	if h.Get("Content-Length") == "" && bodyAllowed(rep.parsed.Status) && r.Method != http.MethodHead {
 		h.Set("Content-Length", strconv.FormatInt(bodyLen, 10))
 	}
 	w.WriteHeader(rep.parsed.Status)
