@@ -3,6 +3,8 @@
 require __DIR__ . '/../../_fixture.php';
 $q = fixture('app/runtime/ini');
 header('Content-Type: text/plain');
+// Holding the worker lets parallel calls occupy every worker of the pool.
+usleep(1000 * (int) ($q['sleep_ms'] ?? 0));
 
 switch ($q['op'] ?? 'get') {
     case 'get':
@@ -20,6 +22,12 @@ switch ($q['op'] ?? 'get') {
     case 'set_memory':
         $old = ini_set('memory_limit', '96M');
         echo var_export($old, true), ',', ini_get('memory_limit');
+        break;
+    case 'try_set':
+        // ini_set on a name the caller may have locked with PHP_ADMIN_VALUE.
+        $name = $q['name'] ?? '';
+        $r = ini_set($name, $q['value'] ?? '');
+        echo var_export($r !== false, true), ',', ini_get($name);
         break;
     default:
         http_response_code(400);
