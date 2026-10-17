@@ -160,10 +160,13 @@ func TestSemaphoreBoundsConcurrentCalls(t *testing.T) {
 	release := make(chan struct{})
 	f := newFake(t, func(net.Conn) []byte { <-release; return []byte("\r\nok") })
 	gw := New(f.addr, WithLogger(discardLogger()), WithMaxConns(1))
+	// The holder's deadline is long, so it cannot free the slot at the moment
+	// the waiter's deadline ends.
+	holder := gw.Script("a.php", WithTimeout(5*time.Second))
 	h := gw.Script("a.php", WithTimeout(200*time.Millisecond))
 
 	var wg sync.WaitGroup
-	wg.Go(func() { serveOnce(h, "GET", "/a.php", "") })
+	wg.Go(func() { serveOnce(holder, "GET", "/a.php", "") })
 	<-f.calls // the first call holds the only slot
 
 	start := time.Now()
