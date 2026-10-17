@@ -123,7 +123,7 @@ func (s *h2Session) writeBody(ctx context.Context, body []byte, framing string) 
 	if framing == "chunked" {
 		parts = thirds(body)
 	}
-	if len(parts) == 0 {
+	if len(body) == 0 {
 		return s.writeData(nil, true)
 	}
 	for i, p := range parts {
@@ -203,6 +203,9 @@ func (s *h2Session) handle(f http2.Frame) (bool, error) {
 			return false, nil
 		}
 		s.headers(f)
+		if s.status >= 100 && s.status < 200 {
+			return false, nil
+		}
 		return f.StreamEnded(), nil
 	case *http2.DataFrame:
 		if f.StreamID != h2Stream {
@@ -278,7 +281,7 @@ func (s *h2Session) refund(n int) error {
 }
 
 func (s *h2Session) headers(f *http2.MetaHeadersFrame) {
-	if s.header != nil {
+	if s.header != nil && s.status >= 200 {
 		return // trailers: not part of the observation
 	}
 	s.header = http.Header{}
@@ -289,6 +292,8 @@ func (s *h2Session) headers(f *http2.MetaHeadersFrame) {
 		}
 		s.header.Add(http.CanonicalHeaderKey(hf.Name), hf.Value)
 	}
+	// An interim 1xx (RFC 9110 section 15.2) is not the response; the final
+	// header block follows on the same stream.
 }
 
 func (s *h2Session) observation() *Observation {
