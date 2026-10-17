@@ -180,10 +180,10 @@ cases:
     request: { method: GET, target: "/malformed?kind=stall" }
     route: { timeout_ms: 500 }
     expect: { status: 504, reaches_responder: false, duration_max_ms: 2000 }
-  - id: gw-head-content-length-matches-get
+  - id: gw-head-content-length-not-invented
     tier: gateway
-    source: "RFC 9110 section 9.3.2"
-    level: SHOULD
-    summary: A HEAD response carries the Content-Length the GET response would have, and no body.
+    source: "docs/design.md, the responder's output becomes the HTTP response; RFC 9110 section 9.3.2"
+    level: MUST
+    summary: A HEAD response carries no Content-Length the responder did not send; an invented 0 would contradict the GET response.
     request: { method: HEAD, target: "/respond?body=hello" }
-    expect: { status: 200, headers: { Content-Length: "5" }, body: "" }
+    expect: { status: 200, headers_absent: [Content-Length], body: "" }

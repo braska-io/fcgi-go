@@ -126,7 +126,7 @@ A failed call never sends part of the responder's output to the client. The libr
 - A `Location` with an absolute URI and no `Status:` gives 302.
 - `FCGI_STDERR` content goes to the logger at warn level, capped at 8 KiB per call. It never reaches the client.
 - A non-zero application status in `FCGI_END_REQUEST` is logged; the response stands.
-- A response without `Content-Length` gets one from the spooled body. Responders produce the body for `HEAD` too, so the length matches `GET`; the server drops the body.
+- A response without `Content-Length` gets one from the spooled body. For `HEAD` the body is empty by definition, so the gateway adds none.
 - `Range` request headers reach the responder unchanged. The gateway never builds a 206 itself; RFC 9110 section 14.2 allows a server to ignore `Range`.
 
 ## Readiness never runs a script
