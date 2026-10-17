@@ -74,13 +74,16 @@ func roundTrip(conn net.Conn, params []Param, stdin io.Reader, stdout, stderr io
 	go func() { sendErr <- sendRequest(conn, params, stdin) }()
 
 	res, err := readResponse(conn, stdout, stderr)
+	// A responder may end the request before reading all of stdin. Closing
+	// makes the sender's next write fail; waiting for it means stdin is no
+	// longer read once we return, so the caller may free it.
+	_ = conn.Close()
+	sendE := <-sendErr
 	if err != nil {
 		return res, err
 	}
-	// A responder may end the request before reading all of stdin.
-	_ = conn.Close()
-	if err := <-sendErr; err != nil && !isClosed(err) {
-		return res, fmt.Errorf("send request: %w", err)
+	if sendE != nil && !isClosed(sendE) {
+		return res, fmt.Errorf("send request: %w", sendE)
 	}
 	return res, nil
 }

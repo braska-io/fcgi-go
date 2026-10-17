@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -144,5 +145,39 @@ func TestDialRejectsBadAddress(t *testing.T) {
 		if _, err := Dial(context.Background(), a); err == nil {
 			t.Errorf("Dial(%q) succeeded", a)
 		}
+	}
+}
+
+// slowReader hands out stdin slowly and records whether a read was still
+// running after the caller declared stdin released.
+type slowReader struct {
+	released atomic.Bool
+	late     atomic.Bool
+}
+
+func (r *slowReader) Read(p []byte) (int, error) {
+	time.Sleep(5 * time.Millisecond)
+	if r.released.Load() {
+		r.late.Store(true)
+	}
+	return copy(p, make([]byte, min(len(p), 4096))), nil
+}
+
+// The caller may free stdin as soon as Do returns, so no read of it may
+// happen after that, also when the responder fails mid-request.
+func TestDoStopsReadingStdinBeforeReturning(t *testing.T) {
+	addr := serve(t, func(c net.Conn) {
+		var h [8]byte
+		_, _ = io.ReadFull(c, h[:]) // then close without END_REQUEST
+	})
+	stdin := &slowReader{}
+	_, err := Do(context.Background(), dial(t, addr), nil, stdin, io.Discard, io.Discard)
+	stdin.released.Store(true)
+	if err == nil {
+		t.Fatal("want an error for a responder that closes early")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if stdin.late.Load() {
+		t.Fatal("stdin was still read after Do returned")
 	}
 }
