@@ -21,6 +21,7 @@ Each responder lives in `fixtures/<name>/` with a `Dockerfile` and a `responder.
 name: c
 address: tcp:127.0.0.1:9002   # as the suite reaches it
 document_root: /srv           # DOCUMENT_ROOT the gateway sends
+script_extension: ""          # appended to a script without one; php uses .php
 fixtures: [dump, respond, crash, slow, big, stderr, exitcode, txn, fatal]
 deviations: []                # documented differences, as {fixture, note} entries
 ```

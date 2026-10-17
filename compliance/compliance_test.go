@@ -46,7 +46,7 @@ func fcgiTarget(spool string) compliance.Target {
 			if rt.TimeoutMS > 0 {
 				opts = append(opts, fcgi.WithTimeout(time.Duration(rt.TimeoutMS)*time.Millisecond))
 			}
-			return gw.Script(rt.Script, opts...)
+			return gw.Script(r.Script(rt.Script), opts...)
 		}
 	}
 }

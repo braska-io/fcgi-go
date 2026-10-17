@@ -1,6 +1,7 @@
 name: php
 address: tcp:127.0.0.1:9001
 document_root: /srv/fixtures/php
+script_extension: .php
 fixtures: [dump, respond, crash, slow, big, stderr, txn, fatal, "app/*"]
 deviations:
   - fixture: dump
