@@ -11,6 +11,8 @@ tasks:
     cmds:
       - go vet ./...
       - cd compliance && go vet ./...
+      - cd benchmarks && go vet ./...
+      - cd benchmarks/gateway && go vet ./...
 
   catalog:
     desc: Load and validate the compliance catalog without running any case
@@ -34,3 +36,9 @@ tasks:
     dir: compliance
     cmds:
       - go test ./... -timeout 30m {{.CLI_ARGS}}
+
+  bench:
+    desc: Compare fcgi-go with nginx in front of php-fpm and update benchmarks/README.md
+    dir: benchmarks
+    cmds:
+      - go run ./cmd/bench -out README.md -rev "$(git rev-parse --short HEAD)" {{.CLI_ARGS}}

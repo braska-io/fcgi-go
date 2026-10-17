@@ -1,0 +1,7 @@
+# Only the benchmark gateway image builds from the repository root.
+*
+!go.mod
+!*.go
+!internal
+!benchmarks/gateway
+*_test.go
