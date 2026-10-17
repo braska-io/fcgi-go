@@ -466,6 +466,7 @@ cases:
     source: "RFC 3875 section 6.4"
     level: MUST
     summary: "Output written before an uncaught error is read and forwarded. The text does not say which status an aborted script gets, so none is asserted."
+    waived: "docs/design.md: a responder that ends without FCGI_END_REQUEST answers 502 and never sends partial output."
     request:
       method: GET
       target: "/fatal.php"

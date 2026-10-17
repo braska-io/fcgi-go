@@ -9,11 +9,13 @@ A responder picks the fixture from the path of `SCRIPT_NAME`, without the leadin
 | Name | Language | FastCGI stack | Process model | Special role |
 | --- | --- | --- | --- | --- |
 | `php` | PHP 8.3 | php-fpm | pre-forked children | the most common production responder; scripts in `fixtures/php/` |
-| `c` | C | libfcgi (`fcgiapp.h`) | one process per connection slot | the reference C stack |
-| `cpp` | C++ | own code; no maintained C++ library exists | threads | a second protocol stack beside libfcgi |
-| `rust` | Rust | own code, no FastCGI crate | async tasks | also emits malformed protocol on request |
+| `c` | C | libfcgi (`fcgiapp.h`) | 4 threads in a supervised process | the reference C stack |
+| `cpp` | C++ | own code; no maintained C++ library exists | threads in a supervised process | a second protocol stack beside libfcgi |
+| `rust` | Rust | own code, no FastCGI crate | async tasks in a supervised process | also emits malformed protocol on request |
 
 Each responder lives in `fixtures/<name>/` with a `Dockerfile` and a `responder.yaml`. The container listens for FastCGI on TCP port 9000 and keeps state under `$FIXTURE_STATE` (`/state`).
+
+A crash fixture kills the server process of `c`, `cpp` and `rust`. A supervisor holds the listening socket and forks a new server at once. A connection that arrives in between waits in the backlog and is not refused.
 
 `responder.yaml` tells the suite how to reach the responder and which fixtures it implements. The file of the `c` responder:
 
@@ -21,6 +23,7 @@ Each responder lives in `fixtures/<name>/` with a `Dockerfile` and a `responder.
 name: c
 address: tcp:127.0.0.1:9002   # as the suite reaches it
 document_root: /srv           # DOCUMENT_ROOT the gateway sends
+script_extension: ""          # appended to a script without one; php uses .php
 fixtures: [dump, respond, crash, slow, big, stderr, exitcode, txn, fatal]
 deviations: []                # documented differences, as {fixture, note} entries
 ```

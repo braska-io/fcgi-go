@@ -119,7 +119,7 @@ scenarios:
             expect: { status: 200 }
 ```
 
-A step holds `request`, `route`, and `expect` as in a case, or `wait_ms`, or `parallel`. With `cookie_jar: true` on the scenario, cookies set by one step go out with every later step, as a browser sends them. `expect` adds `duration_min_ms` and `duration_max_ms`. Steps run in order on one transport; a scenario runs on each transport and responder, like a case.
+A step holds `request`, `route`, and `expect` as in a case, or `wait_ms`, or `parallel`. With `cookie_jar: true` on the scenario, cookies set by one step go out with every later step, as a browser sends them. `expect` adds `duration_min_ms` and `duration_max_ms`. A request step inside `parallel` may set `delay_ms` to start later than its siblings. `duration_*` counts from the request, not from the delay. Steps run in order on one transport; a scenario runs on each transport and responder, like a case.
 
 ## The suite configures the handler the same way for every case
 

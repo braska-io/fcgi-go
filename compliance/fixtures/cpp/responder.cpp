@@ -17,6 +17,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -679,6 +680,37 @@ void serve(int fd) {
 
 }  // namespace
 
+namespace {
+volatile std::sig_atomic_t stopping = 0;
+pid_t server = 0;
+
+void forward(int sig) {
+    stopping = 1;
+    if (server > 0) ::kill(server, sig);
+}
+
+// The supervisor owns the listening socket, so it stays open while a crashed
+// server is replaced: a connection in that gap waits in the backlog instead
+// of being refused. The server also never runs as PID 1, where the kernel
+// would discard the signals the crash fixtures raise.
+void supervise() {
+    std::signal(SIGTERM, forward);
+    std::signal(SIGINT, forward);
+    for (;;) {
+        server = ::fork();
+        if (server < 0) { std::perror("fork"); std::exit(1); }
+        if (server == 0) {
+            std::signal(SIGTERM, SIG_DFL);
+            std::signal(SIGINT, SIG_DFL);
+            return;
+        }
+        int status;
+        while (::waitpid(server, &status, 0) < 0) {}
+        if (stopping) std::exit(0);
+    }
+}
+}  // namespace
+
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
     int ls = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -693,6 +725,7 @@ int main() {
         return 1;
     }
     std::fprintf(stderr, "listening on 0.0.0.0:9000\n");
+    supervise();
     for (;;) {
         int fd = ::accept(ls, nullptr, nullptr);
         if (fd < 0) { if (errno == EINTR) continue; std::perror("accept"); return 1; }

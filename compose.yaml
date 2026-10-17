@@ -1,5 +1,6 @@
 # Reference FastCGI responders for the compliance suite (compliance/RESPONDERS.md).
-# Crash fixtures kill the responder on purpose; restart brings it back.
+# Crash fixtures kill a server process on purpose; each responder replaces it
+# itself. restart covers a responder that dies as a whole.
 services:
   php:
     restart: always

@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -31,17 +32,28 @@ var ErrPending = errors.New("compliance: pending")
 // Responder is one reference FastCGI responder, read from
 // fixtures/<name>/responder.yaml.
 type Responder struct {
-	Name         string      `yaml:"name"`
-	Address      string      `yaml:"address"`
-	DocumentRoot string      `yaml:"document_root"`
-	Fixtures     []string    `yaml:"fixtures"`
-	Deviations   []Deviation `yaml:"deviations"`
+	Name         string `yaml:"name"`
+	Address      string `yaml:"address"`
+	DocumentRoot string `yaml:"document_root"`
+	// ScriptExtension is appended to a route script without extension, for
+	// responders that run files, such as php-fpm: "crash" runs "crash.php".
+	ScriptExtension string      `yaml:"script_extension"`
+	Fixtures        []string    `yaml:"fixtures"`
+	Deviations      []Deviation `yaml:"deviations"`
 }
 
 // Deviation is a documented difference of one responder's fixture.
 type Deviation struct {
 	Fixture string `yaml:"fixture"`
 	Note    string `yaml:"note"`
+}
+
+// Script maps a route script to the file this responder runs.
+func (r *Responder) Script(script string) string {
+	if r.ScriptExtension == "" || path.Ext(script) != "" {
+		return script
+	}
+	return script + r.ScriptExtension
 }
 
 // Implements reports whether the responder serves the fixture. A trailing
@@ -228,9 +240,10 @@ func doH1(ctx context.Context, addr string, req *Request, body []byte) (*Observa
 		return nil, fmt.Errorf("write h1 request: %w", err)
 	}
 
-	resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: req.Method})
+	br := bufio.NewReader(c)
+	resp, err := readFinalResponse(br, req.Method)
 	if err != nil {
-		return nil, fmt.Errorf("read h1 response: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 	rb, err := io.ReadAll(resp.Body)
@@ -238,6 +251,20 @@ func doH1(ctx context.Context, addr string, req *Request, body []byte) (*Observa
 		return nil, fmt.Errorf("read h1 body: %w", err)
 	}
 	return &Observation{Status: resp.StatusCode, Header: resp.Header, Body: rb}, nil
+}
+
+// readFinalResponse skips interim 1xx responses (RFC 9110 section 15.2),
+// such as 100 Continue, and returns the final one.
+func readFinalResponse(br *bufio.Reader, method string) (*http.Response, error) {
+	for {
+		resp, err := http.ReadResponse(br, &http.Request{Method: method})
+		if err != nil {
+			return nil, fmt.Errorf("read h1 response: %w", err)
+		}
+		if resp.StatusCode >= 200 || resp.StatusCode == http.StatusSwitchingProtocols {
+			return resp, nil
+		}
+	}
 }
 
 // thirds splits a body into up to three non-empty parts, so chunked and
@@ -353,6 +380,13 @@ func runSteps(ctx context.Context, steps []Step, tr Transport, target func(Route
 				return failures, err
 			}
 		default:
+			if st.DelayMS > 0 {
+				select {
+				case <-time.After(time.Duration(st.DelayMS) * time.Millisecond):
+				case <-ctx.Done():
+					return failures, ctx.Err()
+				}
+			}
 			o, err := Do(ctx, tr, jar.apply(st.Request), target(st.Route.withScript(st.Request.Target)))
 			if err != nil {
 				return failures, fmt.Errorf("%s: %w", label, err)

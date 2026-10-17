@@ -64,6 +64,7 @@ type Step struct {
 	Route    Route    `yaml:"route"`
 	Expect   Expect   `yaml:"expect"`
 	WaitMS   int      `yaml:"wait_ms"`
+	DelayMS  int      `yaml:"delay_ms"`
 	Parallel []Step   `yaml:"parallel"`
 }
 
