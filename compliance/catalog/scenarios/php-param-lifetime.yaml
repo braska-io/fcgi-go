@@ -1,0 +1,50 @@
+# php-fpm applies PHP_VALUE and PHP_ADMIN_VALUE parameters to the worker,
+# not to the request (docs/design.md, responder parameters can outlive the call).
+# Four parallel calls that hold their worker reach all four children of the
+# fixture pool (pm static, 4 children), so the following plain call meets a
+# changed worker whichever child it gets. Only highlight.* settings are used:
+# no other case reads them, so the lasting change harms no other case.
+scenarios:
+  - id: php-param-php-value-outlives-call
+    tier: app
+    source: "php.net install.fpm.configuration (PHP_VALUE); observed behaviour of php-fpm"
+    level: OBSERVED
+    summary: A PHP_VALUE parameter changes the worker for later calls that do not send it.
+    steps:
+      - parallel:
+          - request: { method: GET, target: "/app/runtime/ini.php?op=get&name=highlight.comment&sleep_ms=500" }
+            route: { params: { PHP_VALUE: "highlight.comment=#123456" } }
+            expect: { status: 200, body: "'#123456'" }
+          - request: { method: GET, target: "/app/runtime/ini.php?op=get&name=highlight.comment&sleep_ms=500" }
+            route: { params: { PHP_VALUE: "highlight.comment=#123456" } }
+            expect: { status: 200, body: "'#123456'" }
+          - request: { method: GET, target: "/app/runtime/ini.php?op=get&name=highlight.comment&sleep_ms=500" }
+            route: { params: { PHP_VALUE: "highlight.comment=#123456" } }
+            expect: { status: 200, body: "'#123456'" }
+          - request: { method: GET, target: "/app/runtime/ini.php?op=get&name=highlight.comment&sleep_ms=500" }
+            route: { params: { PHP_VALUE: "highlight.comment=#123456" } }
+            expect: { status: 200, body: "'#123456'" }
+      - request: { method: GET, target: "/app/runtime/ini.php?op=get&name=highlight.comment" }
+        expect: { status: 200, body: "'#123456'" }
+
+  - id: php-param-php-admin-value-locks-later-calls
+    tier: app
+    source: "php.net install.fpm.configuration (PHP_ADMIN_VALUE, php_admin_value); observed behaviour of php-fpm"
+    level: OBSERVED
+    summary: A PHP_ADMIN_VALUE parameter stays on the worker, and later calls cannot change the setting with ini_set.
+    steps:
+      - parallel:
+          - request: { method: GET, target: "/app/runtime/ini.php?op=get&name=highlight.string&sleep_ms=500" }
+            route: { params: { PHP_ADMIN_VALUE: "highlight.string=#654321" } }
+            expect: { status: 200, body: "'#654321'" }
+          - request: { method: GET, target: "/app/runtime/ini.php?op=get&name=highlight.string&sleep_ms=500" }
+            route: { params: { PHP_ADMIN_VALUE: "highlight.string=#654321" } }
+            expect: { status: 200, body: "'#654321'" }
+          - request: { method: GET, target: "/app/runtime/ini.php?op=get&name=highlight.string&sleep_ms=500" }
+            route: { params: { PHP_ADMIN_VALUE: "highlight.string=#654321" } }
+            expect: { status: 200, body: "'#654321'" }
+          - request: { method: GET, target: "/app/runtime/ini.php?op=get&name=highlight.string&sleep_ms=500" }
+            route: { params: { PHP_ADMIN_VALUE: "highlight.string=#654321" } }
+            expect: { status: 200, body: "'#654321'" }
+      - request: { method: GET, target: "/app/runtime/ini.php?op=try_set&name=highlight.string&value=%23000000" }
+        expect: { status: 200, body: "false,#654321" }
