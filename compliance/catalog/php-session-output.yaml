@@ -1,0 +1,1040 @@
+# PHP sessions, cookies, headers, status and output through the gateway.
+# Expected values come from the php.net manual pages cited in `source`.
+# Fixtures: fixtures/php/app/session/*.php; php.ini sets session.name=FCGISESSID,
+# session.use_strict_mode=1, session.cookie_httponly=1 and output_buffering=4096.
+cases:
+  # --- Session cookie and cache limiter -------------------------------------
+
+  - id: php-sess-start-sets-httponly-cookie
+    tier: app
+    source: "php.net session.configuration (session.cookie_httponly, session.cookie_path)"
+    level: OBSERVED
+    summary: session_start() sends the session cookie with path / and HttpOnly as php.ini configures.
+    request: { method: GET, target: "/app/session/fixed.php" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["FCGISESSID=fcgifixture0001; path=/; HttpOnly"] }
+      body: "FCGISESSID=fcgifixture0001"
+
+  - id: php-sess-nocache-limiter-headers
+    tier: app
+    source: "php.net session_cache_limiter() (nocache); php.net session.configuration (session.cache_limiter defaults to nocache)"
+    level: OBSERVED
+    summary: The default nocache limiter sends the documented Expires, Cache-Control and Pragma fields.
+    request: { method: GET, target: "/app/session/fixed.php" }
+    expect:
+      status: 200
+      headers:
+        Expires: "Thu, 19 Nov 1981 08:52:00 GMT"
+        Cache-Control: "no-store, no-cache, must-revalidate"
+        Pragma: "no-cache"
+
+  - id: php-sess-private-limiter-headers
+    tier: app
+    source: "php.net session_cache_limiter() (private); php.net session.configuration (session.cache_expire defaults to 180)"
+    level: OBSERVED
+    summary: The private limiter sends the fixed past Expires and Cache-Control private with max-age of 180 minutes, and no Pragma.
+    request: { method: GET, target: "/app/session/fixed.php?limiter=private" }
+    expect:
+      status: 200
+      headers:
+        Expires: "Thu, 19 Nov 1981 08:52:00 GMT"
+        Cache-Control: "private, max-age=10800"
+      headers_absent: [Pragma]
+
+  - id: php-sess-cookie-params
+    tier: app
+    source: "php.net session_set_cookie_params(); php.net session.configuration (session.cookie_samesite)"
+    level: OBSERVED
+    summary: Path, domain, secure and SameSite from session_set_cookie_params() all reach the client in the session cookie.
+    request: { method: GET, target: "/app/session/fixed.php?samesite=Lax&secure=1&path=/app&domain=example.test" }
+    expect:
+      status: 200
+      headers_all:
+        Set-Cookie: ["FCGISESSID=fcgifixture0001; path=/app; domain=example.test; secure; HttpOnly; SameSite=Lax"]
+
+  - id: php-sess-custom-name
+    tier: app
+    source: "php.net session_name()"
+    level: OBSERVED
+    summary: session_name() before session_start() renames the session cookie.
+    request: { method: GET, target: "/app/session/fixed.php?name=OTHER&id=abc123" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["OTHER=abc123; path=/; HttpOnly"] }
+      body: "OTHER=abc123"
+
+  - id: php-sess-httponly-off
+    tier: app
+    source: "php.net session.configuration (session.cookie_httponly)"
+    level: OBSERVED
+    summary: With httponly disabled for the call, the session cookie carries no HttpOnly attribute.
+    request: { method: GET, target: "/app/session/fixed.php?httponly=0" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["FCGISESSID=fcgifixture0001; path=/"] }
+
+  - id: php-sess-name-without-start-sends-no-cookie
+    tier: app
+    source: "php.net session_status(); php.net session.configuration (session.name)"
+    level: OBSERVED
+    summary: A script that never starts a session reports PHP_SESSION_NONE, the php.ini session name, and sends no cookie.
+    request: { method: GET, target: "/app/session/status.php?case=name" }
+    expect:
+      status: 200
+      headers_absent: [Set-Cookie]
+      body: "none,FCGISESSID"
+
+  # --- Strict mode and session id sources -------------------------------------
+
+  - id: php-sess-strict-rejects-unknown-id
+    tier: app
+    source: "php.net session.configuration (session.use_strict_mode)"
+    level: MUST
+    summary: In strict mode an uninitialized id from the cookie is not adopted; a new id is issued.
+    request:
+      method: GET
+      target: "/app/session/strict.php"
+      headers: [[Cookie, "FCGISESSID=unknownsid0000000000000000000000"]]
+    expect:
+      status: 200
+      body: "new"
+
+  - id: php-sess-query-id-ignored
+    tier: app
+    source: "php.net session.configuration (session.use_only_cookies defaults to 1)"
+    level: OBSERVED
+    summary: A session id in the query string is ignored, so session_start() issues its own id.
+    request: { method: GET, target: "/app/session/strict.php?FCGISESSID=fromquery0000000000000000000000" }
+    expect:
+      status: 200
+      body: "new"
+
+  # --- session_status() ----------------------------------------------------------
+
+  - id: php-sess-status-across-write-close
+    tier: app
+    source: "php.net session_status(); php.net session_write_close()"
+    level: OBSERVED
+    summary: session_status() moves from NONE to ACTIVE at session_start() and back to NONE after session_write_close().
+    request: { method: GET, target: "/app/session/status.php?case=write_close" }
+    expect:
+      status: 200
+      body: "none,active,none"
+
+  - id: php-sess-read-and-close-status
+    tier: app
+    source: "php.net session_start() (read_and_close)"
+    level: MUST
+    summary: read_and_close closes the session immediately after reading, so no session is active afterwards.
+    request: { method: GET, target: "/app/session/status.php?case=read_and_close" }
+    expect:
+      status: 200
+      body: "none,none"
+
+  - id: php-sess-start-after-output-fails
+    tier: app
+    source: "php.net session_start() (must be called before outputting anything)"
+    level: OBSERVED
+    summary: session_start() after the 4096-byte output buffer has overflowed fails and sends no session cookie.
+    request: { method: GET, target: "/app/session/late.php?case=session&n=5000" }
+    expect:
+      status: 200
+      headers_absent: [Set-Cookie]
+      body_contains: "session_start=false"
+
+  # --- setcookie() and setrawcookie() ------------------------------------------
+
+  - id: php-out-cookie-multiple-in-order
+    tier: app
+    source: "php.net setcookie() (multiple calls are performed in the order called)"
+    level: OBSERVED
+    summary: Three setcookie() calls arrive as three Set-Cookie fields in call order.
+    request: { method: GET, target: "/app/session/cookies.php?case=multi" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["a=1", "b=2", "c=3"] }
+
+  - id: php-out-cookie-value-urlencoded
+    tier: app
+    source: "php.net setcookie() (the value portion of the cookie will automatically be urlencoded)"
+    level: OBSERVED
+    summary: setcookie() urlencodes the value, so ";" and "/" arrive percent-encoded.
+    request: { method: GET, target: "/app/session/cookies.php?case=encode" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["enc=a%3Bb%2Fc"] }
+
+  - id: php-out-setrawcookie-not-encoded
+    tier: app
+    source: "php.net setrawcookie()"
+    level: OBSERVED
+    summary: setrawcookie() sends the value as given, without encoding it again.
+    request: { method: GET, target: "/app/session/cookies.php?case=raw" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["raw=a%3Bb"] }
+
+  - id: php-out-cookie-attributes
+    tier: app
+    source: "php.net setcookie() (options array: path, domain, secure, httponly, samesite)"
+    level: OBSERVED
+    summary: All options-array attributes reach the client in one Set-Cookie field.
+    request: { method: GET, target: "/app/session/cookies.php?case=attrs" }
+    expect:
+      status: 200
+      headers_all:
+        Set-Cookie: ["attr=v; path=/p; domain=example.test; secure; HttpOnly; SameSite=Strict"]
+
+  - id: php-out-cookie-delete
+    tier: app
+    source: "php.net setcookie() (deleting: value 'deleted' and expiration time in the past)"
+    level: MUST
+    summary: An empty value deletes the cookie by sending 'deleted' with an expiry in the past and Max-Age=0.
+    request: { method: GET, target: "/app/session/cookies.php?case=delete" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["gone=deleted; expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0"] }
+
+  - id: php-out-cookie-expires-timestamp
+    tier: app
+    source: "php.net setcookie() (expires is a Unix timestamp; PHP converts it to the date format internally)"
+    level: OBSERVED
+    summary: A Unix timestamp expiry arrives as an HTTP date with Max-Age=0 for a time in the past.
+    request: { method: GET, target: "/app/session/cookies.php?case=expires_past" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["old=v; expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0"] }
+
+  - id: php-out-cookie-header-replaces-setcookie
+    tier: app
+    source: "php.net header() (replace defaults to true)"
+    level: OBSERVED
+    summary: "header('Set-Cookie: ...') with the default replace removes the earlier setcookie() field."
+    request: { method: GET, target: "/app/session/cookies.php?case=header_replace" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["b=2"] }
+
+  - id: php-out-cookie-header-adds-partitioned
+    tier: app
+    source: "php.net header() (example: setting a cookie with Partitioned; replace=false)"
+    level: OBSERVED
+    summary: A raw Set-Cookie field with replace=false follows the setcookie() field, attributes verbatim.
+    request: { method: GET, target: "/app/session/cookies.php?case=header_add" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["a=1", "hdr=1; Secure; Path=/; Partitioned;"] }
+
+  - id: php-out-cookie-after-output-fails
+    tier: app
+    source: "php.net setcookie() (if output exists prior to calling this function, setcookie() will fail and return false)"
+    level: MUST
+    summary: setcookie() after the output buffer has overflowed returns false and no Set-Cookie arrives.
+    request: { method: GET, target: "/app/session/late.php?case=setcookie&n=5000" }
+    expect:
+      status: 200
+      headers_absent: [Set-Cookie]
+      body_contains: "setcookie=false"
+
+  - id: php-out-cookie-within-buffer-succeeds
+    tier: app
+    source: "php.net setcookie() (output buffering allows output before the call); php.net outcontrol.configuration (output_buffering)"
+    level: OBSERVED
+    summary: Output still inside the 4096-byte buffer does not stop setcookie().
+    request: { method: GET, target: "/app/session/late.php?case=setcookie&n=10" }
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["late=1"] }
+      body_contains: "setcookie=true"
+
+  - id: php-out-cookie-request-decoded
+    tier: app
+    source: "php.net setcookie() (the value portion is automatically urlencoded and decoded by PHP)"
+    level: OBSERVED
+    summary: Request cookies reach $_COOKIE with their values urldecoded.
+    request:
+      method: GET
+      target: "/app/session/cookies.php?case=read"
+      headers: [[Cookie, "x=1; y=a%20b"]]
+    expect:
+      status: 200
+      body: '{"x":"1","y":"a b"}'
+
+  - id: php-out-cookie-header-remove
+    tier: app
+    source: "php.net header_remove()"
+    level: OBSERVED
+    summary: header_remove('Set-Cookie') removes a cookie that setcookie() queued.
+    request: { method: GET, target: "/app/session/headers.php?case=remove_cookie" }
+    expect:
+      status: 200
+      headers_absent: [Set-Cookie]
+
+  # --- header(), header_remove(), headers_list(), headers_sent() --------------
+
+  - id: php-out-header-replace-false-duplicates
+    tier: app
+    source: "php.net header() (replace=false forces multiple headers of the same type)"
+    level: OBSERVED
+    summary: header() with replace=false adds fields of one name, all arriving in order.
+    request: { method: GET, target: "/app/session/headers.php?case=dup" }
+    expect:
+      status: 200
+      headers_all: { X-Multi: ["one", "two", "three"] }
+
+  - id: php-out-header-www-authenticate-pair
+    tier: app
+    source: "php.net header() (replace parameter example with WWW-Authenticate)"
+    level: OBSERVED
+    summary: The manual's WWW-Authenticate Negotiate and NTLM pair arrives as two fields with status 401.
+    request: { method: GET, target: "/app/session/headers.php?case=www_auth" }
+    expect:
+      status: 401
+      headers_all: { WWW-Authenticate: ["Negotiate", "NTLM"] }
+
+  - id: php-out-header-replace-default
+    tier: app
+    source: "php.net header() (by default it will replace)"
+    level: OBSERVED
+    summary: A second header() of the same name replaces the first.
+    request: { method: GET, target: "/app/session/headers.php?case=replace" }
+    expect:
+      status: 200
+      headers_all: { X-Rep: ["two"] }
+
+  - id: php-out-header-remove-one
+    tier: app
+    source: "php.net header_remove() (example #1)"
+    level: OBSERVED
+    summary: header_remove('X-Foo') removes X-Foo and keeps X-Bar, as in the manual example.
+    request: { method: GET, target: "/app/session/headers.php?case=remove" }
+    expect:
+      status: 200
+      headers: { X-Bar: Baz }
+      headers_absent: [X-Foo]
+
+  - id: php-out-header-remove-case-insensitive
+    tier: app
+    source: "php.net header_remove() (this parameter is case-insensitive)"
+    level: OBSERVED
+    summary: header_remove('x-foo') removes a field set as X-Foo.
+    request: { method: GET, target: "/app/session/headers.php?case=remove_ci" }
+    expect:
+      status: 200
+      headers: { X-Bar: Baz }
+      headers_absent: [X-Foo]
+
+  - id: php-out-header-remove-all
+    tier: app
+    source: "php.net header_remove() (when null, all previously set headers are removed)"
+    level: OBSERVED
+    summary: header_remove() without a name removes every header set so far.
+    request: { method: GET, target: "/app/session/headers.php?case=remove_all" }
+    expect:
+      status: 200
+      headers_absent: [X-Foo, X-Bar]
+
+  - id: php-out-headers-list
+    tier: app
+    source: "php.net headers_list() (example #1)"
+    level: OBSERVED
+    summary: headers_list() returns the queued headers in order, and the same headers reach the client.
+    request: { method: GET, target: "/app/session/headers.php?case=list" }
+    expect:
+      status: 200
+      headers:
+        Example-Test: foo
+        Content-Type: "text/plain; charset=UTF-8"
+      headers_all: { Set-Cookie: ["foo=bar"] }
+      body: "X-Fixture: app/session/headers\nSet-Cookie: foo=bar\nExample-Test: foo\nContent-Type: text/plain; charset=UTF-8"
+
+  - id: php-out-header-many
+    tier: app
+    source: "php.net header()"
+    level: OBSERVED
+    summary: Fifty distinct header fields all arrive.
+    request: { method: GET, target: "/app/session/headers.php?case=many" }
+    expect:
+      status: 200
+      headers: { X-Many-00: "0", X-Many-25: "25", X-Many-49: "49" }
+
+  - id: php-out-headers-sent-false-within-buffer
+    tier: app
+    source: "php.net headers_sent(); php.net outcontrol.configuration (output_buffering=4096 limits the buffer)"
+    level: OBSERVED
+    summary: 3000 bytes of output stay in the 4096-byte buffer, so headers are unsent and a later header() still arrives.
+    request: { method: GET, target: "/app/session/late.php?case=header&n=3000" }
+    expect:
+      status: 200
+      headers: { X-Late: "1" }
+      body_contains: "sent=false"
+
+  - id: php-out-headers-sent-true-beyond-buffer
+    tier: app
+    source: "php.net headers_sent() (will return true once headers are sent); php.net outcontrol.configuration (output_buffering)"
+    level: MUST
+    summary: 5000 bytes overflow the 4096-byte buffer, so headers are sent and a later header() is lost.
+    request: { method: GET, target: "/app/session/late.php?case=header&n=5000" }
+    expect:
+      status: 200
+      headers_absent: [X-Late]
+      body_contains: "sent=true"
+
+  - id: php-out-headers-held-by-user-buffer
+    tier: app
+    source: "php.net headers_sent() (another option is to use Output Buffering); php.net ob_start()"
+    level: OBSERVED
+    summary: Inside ob_start() 10000 bytes of output leave headers unsent, so a later header() arrives.
+    request: { method: GET, target: "/app/session/late.php?case=ob&n=0" }
+    expect:
+      status: 200
+      headers: { X-Late: "1" }
+      body_contains: "sent=false"
+
+  # --- Content-Type -----------------------------------------------------------
+
+  - id: php-out-ctype-default
+    tier: app
+    source: "php.net ini.core (default_mimetype text/html; default_charset UTF-8 is used in the default Content-Type)"
+    level: MUST
+    summary: Without header() PHP sends Content-Type text/html with charset UTF-8.
+    request: { method: GET, target: "/app/session/headers.php?case=ctype_default" }
+    expect:
+      status: 200
+      headers: { Content-Type: "text/html; charset=UTF-8" }
+      body: "x"
+
+  - id: php-out-ctype-json
+    tier: app
+    source: "php.net header(); php.net ini.core (default_mimetype)"
+    level: OBSERVED
+    summary: "header('Content-Type: application/json') replaces the default and arrives without a charset."
+    request: { method: GET, target: "/app/session/headers.php?case=ctype_json" }
+    expect:
+      status: 200
+      headers: { Content-Type: application/json }
+      body: "{}"
+
+  - id: php-out-ctype-explicit-charset
+    tier: app
+    source: "php.net ini.core (default_charset; header('Content-Type: text/html; charset=ISO-8859-1') overrides it)"
+    level: OBSERVED
+    summary: An explicit charset in header() replaces the default charset.
+    request: { method: GET, target: "/app/session/headers.php?case=ctype_charset" }
+    expect:
+      status: 200
+      headers: { Content-Type: "text/html; charset=ISO-8859-1" }
+
+  - id: php-out-ctype-default-mimetype-ini
+    tier: app
+    source: "php.net ini.core (default_mimetype, INI_ALL)"
+    level: OBSERVED
+    summary: default_mimetype changed at runtime sets the media type of the default Content-Type.
+    request: { method: GET, target: "/app/session/headers.php?case=ctype_ini" }
+    expect:
+      status: 200
+      headers: { Content-Type: "text/plain; charset=UTF-8" }
+
+  - id: php-out-ctype-disabled
+    tier: app
+    source: "php.net ini.core (default_mimetype: to disable this, simply set it to be empty)"
+    level: OBSERVED
+    summary: An empty default_mimetype sends no Content-Type, and the body still arrives.
+    request: { method: GET, target: "/app/session/headers.php?case=ctype_empty" }
+    expect:
+      status: 200
+      headers_absent: [Content-Type]
+      body: "x"
+
+  # --- Status codes -------------------------------------------------------------
+
+  - id: php-out-status-default-200
+    tier: app
+    source: "php.net http_response_code() (defaults to 200 in a web server environment)"
+    level: OBSERVED
+    summary: Without a status call the response is 200 and http_response_code() reports 200.
+    request: { method: GET, target: "/app/session/code.php?case=get" }
+    expect:
+      status: 200
+      body: "int(200)\n"
+
+  - id: php-out-status-http-response-code
+    tier: app
+    source: "php.net http_response_code() (example #1)"
+    level: OBSERVED
+    summary: http_response_code(404) returns the previous 200, then reports and sends 404.
+    request: { method: GET, target: "/app/session/code.php?case=set" }
+    expect:
+      status: 404
+      body: "int(200)\nint(404)\n"
+
+  - id: php-out-status-204-empty
+    tier: app
+    source: "php.net http_response_code()"
+    level: OBSERVED
+    summary: http_response_code(204) with no output arrives as 204 with an empty body.
+    request: { method: GET, target: "/app/session/code.php?case=code&code=204" }
+    expect:
+      status: 204
+      body: ""
+
+  - id: php-out-status-http-line
+    tier: app
+    source: "php.net header() (a header starting with HTTP/ sets the status code)"
+    level: OBSERVED
+    summary: header('HTTP/1.1 404 Not Found') sets status 404.
+    request: { method: GET, target: "/app/session/code.php?case=http_line" }
+    expect:
+      status: 404
+
+  - id: php-out-status-header-response-code-param
+    tier: app
+    source: "php.net header() (response_code forces the HTTP response code)"
+    level: OBSERVED
+    summary: header() with response_code 503 sets the status and sends the header.
+    request: { method: GET, target: "/app/session/code.php?case=header_param" }
+    expect:
+      status: 503
+      headers: { X-Code: "503" }
+
+  - id: php-out-status-header-response-code-empty-header
+    tier: app
+    source: "php.net header() (response_code only has an effect if the header is not empty)"
+    level: OBSERVED
+    summary: header('', true, 503) leaves the status at 200.
+    request: { method: GET, target: "/app/session/code.php?case=header_param_empty" }
+    expect:
+      status: 200
+
+  - id: php-out-status-status-header
+    tier: app
+    source: "php.net header(); RFC 3875 section 6.3.3 (Status header field)"
+    level: MUST
+    summary: "header('Status: 404 Not Found') reaches the gateway as the CGI Status field and sets 404."
+    request: { method: GET, target: "/app/session/code.php?case=status_header" }
+    expect:
+      status: 404
+      headers_absent: [Status]
+
+  # --- Redirects ----------------------------------------------------------------
+
+  - id: php-out-redirect-location-302
+    tier: app
+    source: "php.net header() (Location: returns a REDIRECT (302) status code)"
+    level: OBSERVED
+    summary: "header('Location: ...') alone answers 302 with the Location field."
+    request: { method: GET, target: "/app/session/redirect.php" }
+    expect:
+      status: 302
+      headers: { Location: /target }
+
+  - id: php-out-redirect-keeps-301
+    tier: app
+    source: "php.net header() (unless the 201 or a 3xx status code has already been set)"
+    level: OBSERVED
+    summary: A 301 set before Location stays 301.
+    request: { method: GET, target: "/app/session/redirect.php?pre=301" }
+    expect:
+      status: 301
+      headers: { Location: /target }
+
+  - id: php-out-redirect-keeps-201
+    tier: app
+    source: "php.net header() (unless the 201 or a 3xx status code has already been set)"
+    level: OBSERVED
+    summary: A 201 set before Location stays 201.
+    request: { method: GET, target: "/app/session/redirect.php?pre=201" }
+    expect:
+      status: 201
+      headers: { Location: /target }
+
+  - id: php-out-redirect-overrides-404
+    tier: app
+    source: "php.net header() (Location returns 302 unless 201 or 3xx has been set)"
+    level: OBSERVED
+    summary: A 404 set before Location becomes 302.
+    request: { method: GET, target: "/app/session/redirect.php?pre=404" }
+    expect:
+      status: 302
+      headers: { Location: /target }
+
+  - id: php-out-redirect-307-param
+    tier: app
+    source: "php.net header() (response_code parameter)"
+    level: OBSERVED
+    summary: "header('Location: ...', true, 307) answers 307."
+    request: { method: GET, target: "/app/session/redirect.php?code=307" }
+    expect:
+      status: 307
+      headers: { Location: /target }
+
+  - id: php-out-redirect-303-after
+    tier: app
+    source: "php.net header() (the status may be overridden at any time unless headers have been sent)"
+    level: OBSERVED
+    summary: http_response_code(303) after Location overrides the implied 302.
+    request: { method: GET, target: "/app/session/redirect.php?post=303" }
+    expect:
+      status: 303
+      headers: { Location: /target }
+
+  - id: php-out-redirect-absolute-url
+    tier: app
+    source: "php.net header() (Location: example with an absolute URL)"
+    level: OBSERVED
+    summary: An absolute Location with a query arrives unchanged; the gateway does not rewrite it as a local redirect.
+    request: { method: GET, target: "/app/session/redirect.php?to=https%3A%2F%2Fother.test%2Fx%3Fy%3D1" }
+    expect:
+      status: 302
+      headers: { Location: "https://other.test/x?y=1" }
+
+  # --- echo, print and output buffering --------------------------------------
+
+  - id: php-out-echo-print
+    tier: app
+    source: "php.net echo; php.net print; php.net printf()"
+    level: OBSERVED
+    summary: echo, print, echo with several arguments and printf() write in order.
+    request: { method: GET, target: "/app/session/out.php?case=echo" }
+    expect:
+      status: 200
+      body: "abcd1"
+
+  - id: php-out-empty-body
+    tier: app
+    source: "php.net ini.core (default_mimetype)"
+    level: OBSERVED
+    summary: A script that writes nothing answers 200 with an empty body and the default Content-Type.
+    request: { method: GET, target: "/app/session/out.php?case=empty" }
+    expect:
+      status: 200
+      headers: { Content-Type: "text/html; charset=UTF-8" }
+      body: ""
+
+  - id: php-out-ob-nesting
+    tier: app
+    source: "php.net ob_start() (output buffers are stackable); php.net ob_get_clean(); php.net ob_end_flush()"
+    level: OBSERVED
+    summary: An inner buffer captured with ob_get_clean() is rewritten into the outer buffer, which ob_end_flush() sends.
+    request: { method: GET, target: "/app/session/out.php?case=ob_nest" }
+    expect:
+      status: 200
+      body: "outer-INNER"
+
+  - id: php-out-ob-callback
+    tier: app
+    source: "php.net ob_start() (example #1, user defined callback function)"
+    level: OBSERVED
+    summary: An ob_start() callback rewrites the buffer before it is sent.
+    request: { method: GET, target: "/app/session/out.php?case=ob_callback" }
+    expect:
+      status: 200
+      body: "It's like comparing oranges to oranges."
+
+  - id: php-out-ob-callback-at-script-end
+    tier: app
+    source: "php.net ob_start() (callback is invoked when the buffer is flushed at the end of the script)"
+    level: OBSERVED
+    summary: A buffer left open at script end still runs through its callback.
+    request: { method: GET, target: "/app/session/out.php?case=ob_callback_at_end" }
+    expect:
+      status: 200
+      body: "oranges"
+
+  - id: php-out-ob-get-clean
+    tier: app
+    source: "php.net ob_get_clean() (example #1)"
+    level: OBSERVED
+    summary: ob_get_clean() returns the buffer and discards it, as the manual example shows.
+    request: { method: GET, target: "/app/session/out.php?case=ob_get_clean" }
+    expect:
+      status: 200
+      body: "string(11) \"hello world\"\n"
+
+  - id: php-out-ob-end-clean
+    tier: app
+    source: "php.net ob_end_clean()"
+    level: OBSERVED
+    summary: Output in a buffer ended with ob_end_clean() never reaches the client.
+    request: { method: GET, target: "/app/session/out.php?case=ob_end_clean" }
+    expect:
+      status: 200
+      body: "keep!"
+
+  - id: php-out-ob-clean-ini-buffer
+    tier: app
+    source: "php.net outcontrol.configuration (output_buffering); php.net ob_end_clean()"
+    level: OBSERVED
+    summary: Output still held by the ini-level buffer is discarded when that buffer is cleaned.
+    request: { method: GET, target: "/app/session/out.php?case=ob_clean_all" }
+    expect:
+      status: 200
+      body: "kept"
+
+  - id: php-out-ob-chunk-size-one
+    tier: app
+    source: "php.net ob_start() (a chunk_size of 1 flushes after every output operation)"
+    level: OBSERVED
+    summary: With chunk_size 1 the callback runs once per echo and once more on ob_end_flush().
+    waived: "PHP 8.3 merges outputs with ob_start chunk_size 1, unlike the php.net ob_start() page; the case tests PHP, not the gateway."
+    request: { method: GET, target: "/app/session/out.php?case=ob_chunk" }
+    expect:
+      status: 200
+      body: "[x][y][]"
+
+  - id: php-out-flush-sends-headers
+    tier: app
+    source: "php.net flush() (in a web context headers and the contents of the buffers are flushed)"
+    level: OBSERVED
+    summary: After flush() the headers are sent, so a later header() is lost.
+    waived: "PHP 8.3 under fpm with output_buffering keeps headers unsent on flush() alone, unlike the php.net flush() page; the case tests PHP, not the gateway."
+    request: { method: GET, target: "/app/session/flush.php?case=flush" }
+    expect:
+      status: 200
+      headers_absent: [X-Late]
+      body_contains: "sent=true"
+
+  - id: php-out-ob-flush-sends-headers
+    tier: app
+    source: "php.net ob_flush(); php.net flush()"
+    level: OBSERVED
+    summary: ob_flush() then flush() pushes output past PHP, so headers are sent.
+    request: { method: GET, target: "/app/session/flush.php?case=ob_flush" }
+    expect:
+      status: 200
+      headers_absent: [X-Late]
+      body: "a\nsent=true"
+
+  - id: php-out-implicit-flush
+    tier: app
+    source: "php.net outcontrol.configuration (implicit_flush is equivalent to calling flush() after every output); php.net ob_implicit_flush()"
+    level: OBSERVED
+    summary: With implicit flush and no buffers left, the first echo sends the headers.
+    request: { method: GET, target: "/app/session/flush.php?case=implicit" }
+    expect:
+      status: 200
+      headers_absent: [X-Late]
+      body: "a\nsent=true"
+
+  # --- Large output -----------------------------------------------------------
+
+  - id: php-out-large-5mib
+    tier: app
+    source: "php.net echo; php.net outcontrol.configuration (output_buffering)"
+    level: OBSERVED
+    summary: 5 MiB of output written in 64 KiB echoes arrives complete, ending with its marker.
+    request: { method: GET, target: "/app/session/bigout.php?bytes=5242880" }
+    expect:
+      status: 200
+      body_contains: "0123456789abcdeEND bytes=5242880"
+
+  - id: php-out-large-5mib-flushed
+    tier: app
+    source: "php.net flush()"
+    level: OBSERVED
+    summary: 5 MiB flushed every 64 KiB arrives complete, ending with its marker.
+    request: { method: GET, target: "/app/session/bigout.php?bytes=5242880&flush_every=65536" }
+    expect:
+      status: 200
+      body_contains: "0123456789abcdeEND bytes=5242880"
+
+  - id: php-out-large-content-length
+    tier: app
+    source: "php.net header(); php.net readfile() (example sends Content-Length)"
+    level: OBSERVED
+    summary: 1 MiB with a script-set Content-Length arrives complete with that length.
+    request: { method: GET, target: "/app/session/bigout.php?bytes=1048576&cl=1" }
+    expect:
+      status: 200
+      headers: { Content-Length: "1048576" }
+      body_contains: "0123456789abcdeEND bytes=1048576"
+
+  - id: php-out-small-flushes-exact
+    tier: app
+    source: "php.net flush()"
+    level: OBSERVED
+    summary: Output flushed every 7 bytes arrives byte for byte, without loss or reordering at the record boundaries.
+    request: { method: GET, target: "/app/session/bigout.php?bytes=100&flush_every=7" }
+    expect:
+      status: 200
+      body: "012345601234560123456012345601234560123456012345601234560123456012345601234560123456012END bytes=100"
+
+  # --- zlib.output_compression ---------------------------------------------------
+
+  - id: php-out-zlib-gzip
+    tier: app
+    source: "php.net zlib.configuration (zlib.output_compression)"
+    level: OBSERVED
+    summary: With Accept-Encoding gzip the response carries Content-Encoding gzip and Vary Accept-Encoding.
+    request:
+      method: GET
+      target: "/app/session/gz.php"
+      headers: [[Accept-Encoding, gzip]]
+    expect:
+      status: 200
+      headers: { Content-Encoding: gzip, Vary: Accept-Encoding }
+
+  - id: php-out-zlib-no-accept-encoding
+    tier: app
+    source: "php.net zlib.configuration (pages are compressed if the browser sends Accept-Encoding gzip or deflate)"
+    level: OBSERVED
+    summary: Without Accept-Encoding the body is not compressed and carries no Content-Encoding.
+    request: { method: GET, target: "/app/session/gz.php" }
+    expect:
+      status: 200
+      headers_absent: [Content-Encoding]
+      body_contains: "compress me compress me compress me"
+
+  # --- readfile() and binary bodies ---------------------------------------------
+
+  - id: php-out-readfile-exact
+    tier: app
+    source: "php.net readfile() (example #1, forcing a download)"
+    level: OBSERVED
+    summary: readfile() with the manual's download headers delivers the file byte for byte.
+    request: { method: GET, target: "/app/session/readfile.php?size=128" }
+    expect:
+      status: 200
+      headers:
+        Content-Type: application/octet-stream
+        Content-Disposition: 'attachment; filename="fixture.bin"'
+        Content-Length: "128"
+        Cache-Control: must-revalidate
+        Pragma: public
+      body: "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f\x40\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5a\x5b\x5c\x5d\x5e\x5f\x60\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6a\x6b\x6c\x6d\x6e\x6f\x70\x71\x72\x73\x74\x75\x76\x77\x78\x79\x7a\x7b\x7c\x7d\x7e\x7f"
+
+  - id: php-out-readfile-2mib
+    tier: app
+    source: "php.net readfile()"
+    level: OBSERVED
+    summary: readfile() of a 2 MiB file arrives complete with its Content-Length.
+    request: { method: GET, target: "/app/session/readfile.php?size=2097152&kind=big" }
+    expect:
+      status: 200
+      headers: { Content-Length: "2097152" }
+      body_contains: "rrrrEND"
+
+  - id: php-out-binary-ascii-range
+    tier: app
+    source: "php.net echo; php.net chr()"
+    level: OBSERVED
+    summary: Bytes 0x00 to 0x7f, control characters included, arrive unchanged.
+    request: { method: GET, target: "/app/session/bin.php?case=ascii" }
+    expect:
+      status: 200
+      headers: { Content-Type: application/octet-stream }
+      body: "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f\x40\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5a\x5b\x5c\x5d\x5e\x5f\x60\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6a\x6b\x6c\x6d\x6e\x6f\x70\x71\x72\x73\x74\x75\x76\x77\x78\x79\x7a\x7b\x7c\x7d\x7e\x7f"
+
+  - id: php-out-binary-nul
+    tier: app
+    source: "php.net echo"
+    level: OBSERVED
+    summary: A body of three NUL bytes arrives unchanged.
+    request: { method: GET, target: "/app/session/bin.php?case=nul" }
+    expect:
+      status: 200
+      body: "\0\0\0"
+
+  - id: php-out-binary-header-like
+    tier: app
+    source: "php.net echo; RFC 3875 section 6.2 (the response body follows the header block)"
+    level: OBSERVED
+    summary: A body that looks like a header block stays body and sets no status or header.
+    request: { method: GET, target: "/app/session/bin.php?case=header_like" }
+    expect:
+      status: 200
+      headers_absent: [X-Injected]
+      body: "\r\n\r\nStatus: 500\r\nX-Injected: 1\r\n\r\n"
+
+scenarios:
+  - id: php-sess-values-persist
+    tier: app
+    source: "php.net session_start() (creates a session or resumes the current one based on a session identifier passed via a cookie)"
+    level: OBSERVED
+    summary: With the session cookie sent back, the counter grows across three requests.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=1" }
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=2" }
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=3" }
+
+  - id: php-sess-cookie-not-resent
+    tier: app
+    source: "php.net session_start(); php.net session.configuration (session.use_cookies)"
+    level: OBSERVED
+    summary: A resumed session sends no new session cookie.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=1" }
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=2", headers_absent: [Set-Cookie] }
+
+  - id: php-sess-strict-adopts-issued-id
+    tier: app
+    source: "php.net session.configuration (session.use_strict_mode: the module does not accept uninitialized session IDs)"
+    level: MUST
+    summary: Strict mode adopts an id that the module itself issued.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/strict.php" }
+        expect: { status: 200, body: "no-id-sent" }
+      - request: { method: GET, target: "/app/session/strict.php" }
+        expect: { status: 200, body: "adopted" }
+
+  - id: php-sess-typed-values-roundtrip
+    tier: app
+    source: "php.net session_start(); php.net session.configuration (session.serialize_handler)"
+    level: OBSERVED
+    summary: Integers, floats, booleans, null, lists and escaped strings survive the session round trip.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/data.php?op=set_typed" }
+        expect: { status: 200, body: "ok" }
+      - request: { method: GET, target: "/app/session/data.php?op=dump" }
+        expect:
+          status: 200
+          body: '{"typed":{"int":42,"float":1.5,"bool":true,"null":null,"list":[1,2,3],"str":"a\"b\\c\nd"}}'
+
+  - id: php-sess-regenerate-keeps-data
+    tier: app
+    source: "php.net session_regenerate_id() (replaces the current session id and keeps the current session information)"
+    level: OBSERVED
+    summary: session_regenerate_id() issues a new id, keeps the old session file and the data, and the new cookie resumes it.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/data.php?op=set&k=user&v=alice" }
+        expect: { status: 200, body: "ok" }
+      - request: { method: GET, target: "/app/session/regen.php?delete=0" }
+        expect: { status: 200, body: "ok=1 changed=1 old_file=1 user=alice" }
+      - request: { method: GET, target: "/app/session/data.php?op=get&k=user" }
+        expect: { status: 200, body: "alice", headers_absent: [Set-Cookie] }
+
+  - id: php-sess-regenerate-deletes-old
+    tier: app
+    source: "php.net session_regenerate_id() (delete_old_session: whether to delete the old associated session file)"
+    level: OBSERVED
+    summary: session_regenerate_id(true) deletes the old session file and the data moves to the new id.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/data.php?op=set&k=user&v=bob" }
+        expect: { status: 200, body: "ok" }
+      - request: { method: GET, target: "/app/session/regen.php?delete=1" }
+        expect: { status: 200, body: "ok=1 changed=1 old_file=0 user=bob" }
+      - request: { method: GET, target: "/app/session/data.php?op=get&k=user" }
+        expect: { status: 200, body: "bob" }
+
+  - id: php-sess-destroy-and-delete-cookie
+    tier: app
+    source: "php.net session_destroy() (example #1: delete the session cookie with setcookie(), then destroy)"
+    level: OBSERVED
+    summary: Destroying the session the documented way deletes the cookie, and the next request starts a fresh session.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=1" }
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=2" }
+      - request: { method: GET, target: "/app/session/destroy.php" }
+        expect:
+          status: 200
+          headers_all:
+            Set-Cookie: ["FCGISESSID=deleted; expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0; path=/; HttpOnly"]
+          body: "destroyed=true status=none"
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=1" }
+
+  - id: php-sess-lock-serializes
+    tier: app
+    source: "php.net session_write_close() (session data is locked to prevent concurrent writes; only one script may operate on a session at any time)"
+    level: OBSERVED
+    summary: Two parallel requests on one session serialize; the second waits for the first's 1500 ms hold and sees its write.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/lock.php?tag=init" }
+        expect: { status: 200, body: "init seen=init" }
+      - parallel:
+          - request: { method: GET, target: "/app/session/lock.php?tag=a&hold_ms=1500" }
+            expect: { status: 200, body: "a seen=init,a", duration_min_ms: 1500 }
+          - request: { method: GET, target: "/app/session/lock.php?tag=b&delay_ms=200" }
+            expect: { status: 200, body: "b seen=init,a,b", duration_min_ms: 1300 }
+
+  - id: php-sess-write-close-releases-lock
+    tier: app
+    source: "php.net session_write_close() (end the session as soon as all changes to session variables are done)"
+    level: OBSERVED
+    summary: session_write_close() releases the lock early, so a parallel request on the same session does not wait for the hold.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/lock.php?tag=init" }
+        expect: { status: 200, body: "init seen=init" }
+      - parallel:
+          - request: { method: GET, target: "/app/session/lock.php?tag=a&hold_ms=1500&close=1" }
+            expect: { status: 200, body: "a seen=init,a", duration_min_ms: 1500 }
+          - request: { method: GET, target: "/app/session/lock.php?tag=b&delay_ms=200" }
+            expect: { status: 200, body: "b seen=init,a,b", duration_max_ms: 1000 }
+
+  - id: php-sess-read-and-close-no-lock
+    tier: app
+    source: "php.net session_start() (read_and_close: the session is closed immediately after being read, avoiding unnecessary locking)"
+    level: MUST
+    summary: A read_and_close request holds no lock and writes nothing back; a parallel writer proceeds at once.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/lock.php?tag=init" }
+        expect: { status: 200, body: "init seen=init" }
+      - parallel:
+          - request: { method: GET, target: "/app/session/lock.php?tag=a&hold_ms=1500&ro=1" }
+            expect: { status: 200, body: "a seen=init,a", duration_min_ms: 1500 }
+          - request: { method: GET, target: "/app/session/lock.php?tag=b&delay_ms=200" }
+            expect: { status: 200, body: "b seen=init,b", duration_max_ms: 1000 }
+      - request: { method: GET, target: "/app/session/lock.php?tag=z" }
+        expect: { status: 200, body: "z seen=init,b,z" }
+
+  - id: php-out-cookie-roundtrip
+    tier: app
+    source: "php.net setcookie() (multiple calls in order; deleting a cookie)"
+    level: OBSERVED
+    summary: Cookies set by setcookie() come back in $_COOKIE, and a deleted one is gone on the next request.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/cookies.php?case=multi" }
+        expect: { status: 200, headers_all: { Set-Cookie: ["a=1", "b=2", "c=3"] } }
+      - request: { method: GET, target: "/app/session/cookies.php?case=read" }
+        expect: { status: 200, body: '{"a":"1","b":"2","c":"3"}' }
+      - request: { method: GET, target: "/app/session/cookies.php?case=delete_a" }
+        expect:
+          status: 200
+          headers_all: { Set-Cookie: ["a=deleted; expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0"] }
+      - request: { method: GET, target: "/app/session/cookies.php?case=read" }
+        expect: { status: 200, body: '{"b":"2","c":"3"}' }
+
+  - id: php-out-cookie-encoded-roundtrip
+    tier: app
+    source: "php.net setcookie() (the value portion of the cookie will automatically be urlencoded and decoded by PHP)"
+    level: OBSERVED
+    summary: A value urlencoded by setcookie() decodes back to the original in $_COOKIE.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/cookies.php?case=encode" }
+        expect: { status: 200 }
+      - request: { method: GET, target: "/app/session/cookies.php?case=read" }
+        expect: { status: 200, body: '{"enc":"a;b\/c"}' }
+
+  - id: php-sess-with-app-cookies
+    tier: app
+    source: "php.net session_start(); php.net setcookie()"
+    level: OBSERVED
+    summary: The session survives when the Cookie field also carries several application cookies.
+    cookie_jar: true
+    steps:
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=1" }
+      - request: { method: GET, target: "/app/session/cookies.php?case=multi" }
+        expect: { status: 200 }
+      - request: { method: GET, target: "/app/session/counter.php" }
+        expect: { status: 200, body: "n=2" }

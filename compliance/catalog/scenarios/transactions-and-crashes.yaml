@@ -1,0 +1,134 @@
+# Multi-step behaviour of the gateway with stateful and failing responders
+# (docs/design.md; fixture contract in RESPONDERS.md).
+scenarios:
+  - id: gw-timeout-rolls-back-transaction
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: A call that hits its deadline closes the connection, so the responder's write fails and it rolls back.
+    steps:
+      - request: { method: POST, target: "/txn?op=reset" }
+        expect: { status: 200 }
+      - request: { method: POST, target: "/txn?op=insert&k=a&sleep_ms=1500" }
+        route: { timeout_ms: 300 }
+        expect: { status: 504, reaches_responder: false, duration_max_ms: 1200 }
+      - wait_ms: 2000
+      - request: { method: GET, target: "/txn?op=count&k=a" }
+        expect: { status: 200, body: "0" }
+
+  - id: gw-completed-transaction-commits
+    tier: gateway
+    source: "docs/design.md, both directions are buffered"
+    level: MUST
+    summary: A call that completes lets the responder flush and commit.
+    steps:
+      - request: { method: POST, target: "/txn?op=reset" }
+        expect: { status: 200 }
+      - request: { method: POST, target: "/txn?op=insert&k=b&sleep_ms=100" }
+        expect: { status: 200, body: inserted }
+      - request: { method: GET, target: "/txn?op=count&k=b" }
+        expect: { status: 200, body: "1" }
+
+  - id: gw-crash-before-commit-loses-row
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: A responder that crashes inside a transaction answers 502, and the row is gone.
+    steps:
+      - request: { method: POST, target: "/txn?op=reset" }
+        expect: { status: 200 }
+      - request: { method: POST, target: "/txn?op=insert_crash&k=c" }
+        expect: { status: 502, reaches_responder: false }
+      - wait_ms: 1000
+      - request: { method: GET, target: "/txn?op=count&k=c" }
+        expect: { status: 200, body: "0" }
+
+  - id: gw-crash-after-commit-never-retries
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: A crash after commit answers 502, and the gateway does not retry, so the row exists exactly once.
+    steps:
+      - request: { method: POST, target: "/txn?op=reset" }
+        expect: { status: 200 }
+      - request: { method: POST, target: "/txn?op=insert_commit_crash&k=d" }
+        expect: { status: 502, reaches_responder: false }
+      - wait_ms: 1000
+      - request: { method: GET, target: "/txn?op=count&k=d" }
+        expect: { status: 200, body: "1" }
+
+  - id: gw-next-call-after-crash-succeeds
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: After a responder crash the next call gets its own, complete response.
+    steps:
+      - request: { method: GET, target: "/crash?after_bytes=100&flush=1" }
+        expect: { status: 502, reaches_responder: false }
+      - wait_ms: 1000
+      - request: { method: GET, target: "/respond?body=fresh" }
+        expect: { status: 200, body: fresh }
+
+  - id: gw-next-call-after-timeout-gets-own-response
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: The late output of a timed-out call never answers a later call.
+    steps:
+      - request: { method: GET, target: "/respond?sleep_ms=800&body=late" }
+        route: { timeout_ms: 200 }
+        expect: { status: 504, reaches_responder: false }
+      - request: { method: GET, target: "/respond?body=mine" }
+        expect: { status: 200, body: mine }
+      - wait_ms: 1000
+      - request: { method: GET, target: "/respond?body=again" }
+        expect: { status: 200, body: again }
+
+  - id: gw-saturation-waits-then-503
+    tier: gateway
+    source: "docs/design.md, each call gets its own connection, capped by a semaphore"
+    level: MUST
+    summary: With all four slots busy, a fifth call waits for a slot and answers 503 at its deadline.
+    steps:
+      - parallel:
+          - request: { method: GET, target: "/respond?sleep_ms=1500&body=1" }
+            expect: { status: 200 }
+          - request: { method: GET, target: "/respond?sleep_ms=1500&body=2" }
+            expect: { status: 200 }
+          - request: { method: GET, target: "/respond?sleep_ms=1500&body=3" }
+            expect: { status: 200 }
+          - request: { method: GET, target: "/respond?sleep_ms=1500&body=4" }
+            expect: { status: 200 }
+          - request: { method: GET, target: "/respond?body=5" }
+            route: { timeout_ms: 400 }
+            expect: { status: 503, reaches_responder: false, duration_min_ms: 300, duration_max_ms: 1200 }
+
+  - id: gw-saturation-waiter-gets-slot
+    tier: gateway
+    source: "docs/design.md, each call gets its own connection, capped by a semaphore"
+    level: MUST
+    summary: A waiting call runs as soon as a slot frees, within its deadline.
+    steps:
+      - parallel:
+          - request: { method: GET, target: "/respond?sleep_ms=500&body=1" }
+            expect: { status: 200 }
+          - request: { method: GET, target: "/respond?sleep_ms=500&body=2" }
+            expect: { status: 200 }
+          - request: { method: GET, target: "/respond?sleep_ms=500&body=3" }
+            expect: { status: 200 }
+          - request: { method: GET, target: "/respond?sleep_ms=500&body=4" }
+            expect: { status: 200 }
+          - request: { method: GET, target: "/respond?body=5" }
+            expect: { status: 200, body: "5", duration_min_ms: 300 }
+
+  - id: gw-slow-responder-buffered
+    tier: gateway
+    source: "docs/design.md, both directions are buffered"
+    level: MUST
+    summary: Dripped responder output arrives complete, and a parallel call is not blocked by it.
+    steps:
+      - parallel:
+          - request: { method: GET, target: "/slow?drip_ms=200&chunks=5&chunk_size=3" }
+            expect: { status: 200, body: "..............." }
+          - request: { method: GET, target: "/respond?body=quick" }
+            expect: { status: 200, body: quick, duration_max_ms: 800 }

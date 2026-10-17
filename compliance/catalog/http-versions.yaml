@@ -1,0 +1,1147 @@
+# How HTTP/1.1, HTTP/2 and HTTP/3 request and response features map onto
+# CGI/1.1 so the responder sees the same thing on every version, and where
+# the versions must differ.
+cases:
+  # --- SERVER_PROTOCOL: the one meta-variable that must differ by version ---
+
+  - id: http-server-protocol-h1
+    tier: spec
+    source: "RFC 3875 section 4.1.16"
+    level: MUST
+    summary: >-
+      SERVER_PROTOCOL names the application protocol of the request; for an
+      HTTP/1.1 request that is HTTP/1.1. The value is not case sensitive, so
+      the match ignores case.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+    expect:
+      status: 200
+      env_match: { SERVER_PROTOCOL: "(?i)^HTTP/1\\.1$" }
+
+  - id: http-server-protocol-h2
+    tier: spec
+    source: "RFC 3875 section 4.1.16"
+    level: MUST
+    summary: >-
+      SERVER_PROTOCOL for an HTTP/2 request is HTTP/2.0. The 4.1.16 grammar
+      (HTTP-Version = "HTTP" "/" 1*digit "." 1*digit; extension-version needs
+      the same digit "." digit form) admits no bare "HTTP/2", so the only
+      allowed spelling is HTTP/2.0 in any letter case.
+    transports: [h2]
+    request:
+      method: GET
+      target: "/dump.php"
+    expect:
+      status: 200
+      env_match: { SERVER_PROTOCOL: "(?i)^HTTP/2\\.0$" }
+
+  - id: http-server-protocol-h3
+    tier: spec
+    source: "RFC 3875 section 4.1.16"
+    level: MUST
+    summary: >-
+      SERVER_PROTOCOL for an HTTP/3 request is HTTP/3.0. The 4.1.16 grammar
+      requires digit "." digit, so bare "HTTP/3" does not conform; letter
+      case is free.
+    transports: [h3]
+    request:
+      method: GET
+      target: "/dump.php"
+    expect:
+      status: 200
+      env_match: { SERVER_PROTOCOL: "(?i)^HTTP/3\\.0$" }
+
+  # --- Host / :authority ---
+
+  - id: http-host-from-authority
+    tier: spec
+    source: "RFC 9113 section 8.3.1; RFC 9114 section 4.3.1"
+    level: MUST
+    summary: >-
+      HTTP_HOST carries the request authority on every version: the Host
+      field on h1, and on h2/h3 a Host created from :authority, as an
+      intermediary converting to HTTP/1.1 must do when no Host is present.
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: example.test
+    expect:
+      status: 200
+      env: { HTTP_HOST: example.test }
+
+  - id: http-host-from-authority-with-port
+    tier: spec
+    source: "RFC 9113 section 8.3.1; RFC 9114 section 4.3.1"
+    level: MUST
+    summary: >-
+      An authority with an explicit port reaches HTTP_HOST unchanged on every
+      version; the copy from :authority keeps the port.
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: "example.test:443"
+    expect:
+      status: 200
+      env: { HTTP_HOST: "example.test:443" }
+
+  - id: http-h2-host-equal-to-authority-single-value
+    tier: spec
+    source: "RFC 9113 section 8.3.1; RFC 3875 section 4.1.18"
+    level: MUST
+    summary: >-
+      When an h2/h3 request carries both :authority and an identical host
+      field, HTTP_HOST is one value, not the pair joined with a comma; Host
+      is a singleton field and 4.1.18 requires a single value with the same
+      semantics.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: example.test
+      headers:
+        - ["host", "example.test"]
+    expect:
+      status: 200
+      env: { HTTP_HOST: example.test }
+
+  - id: http-h2-host-differs-from-authority-rejected
+    tier: spec
+    source: "RFC 9113 section 8.3.1"
+    level: SHOULD
+    summary: >-
+      A server SHOULD treat an h2 request whose host field names a different
+      entity than :authority as malformed. Malformed requests are a stream
+      error; 8.1.1 lets the server send a response first, so the observable
+      outcome is a 400 or a reset stream, and the responder never runs. The
+      schema cannot express a reset, so this case expects the 400 variant.
+    transports: [h2]
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: example.test
+      headers:
+        - ["host", "other.test"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h1-duplicate-host-rejected
+    tier: spec
+    source: "RFC 9112 section 3.2"
+    level: MUST
+    summary: >-
+      An HTTP/1.1 request with more than one Host field line gets a 400 and
+      never reaches the responder. The authority produces the first Host
+      line; the header list adds a second.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: example.test
+      headers:
+        - ["Host", "other.test"]
+    expect:
+      reaches_responder: false
+      status: 400
+
+  - id: http-h1-invalid-host-rejected
+    tier: server
+    source: "RFC 9112 section 3.2"
+    level: MUST
+    summary: >-
+      An HTTP/1.1 request whose Host field value is invalid (a space inside
+      the host) gets a 400 and never reaches the responder.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: "bad host.test"
+    expect:
+      reaches_responder: false
+      status: 400
+
+  - id: http-h1-absolute-form-accepted
+    tier: spec
+    source: "RFC 9112 section 3.2.2"
+    level: MUST
+    summary: >-
+      A server MUST accept the absolute-form request-target; the responder
+      sees the same QUERY_STRING as for the origin-form request.
+    transports: [h1]
+    request:
+      method: GET
+      target: "https://example.test/dump.php?q=1"
+      authority: example.test
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "q=1" }
+
+  - id: http-h1-absolute-form-overrides-host
+    tier: spec
+    source: "RFC 9112 section 3.2.2"
+    level: MUST
+    summary: >-
+      With an absolute-form target the origin server MUST ignore the received
+      Host and use the target's authority. Reading: HTTP_HOST therefore shows
+      the target's host, not the ignored Host field, so h1 absolute-form
+      matches what h2/h3 derive from :authority.
+    transports: [h1]
+    request:
+      method: GET
+      target: "https://example.test/dump.php"
+      authority: other.test
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { HTTP_HOST: example.test }
+
+  # --- Cookie ---
+
+  - id: http-cookie-single-field
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: MUST
+    summary: >-
+      One cookie field with two pairs reaches HTTP_COOKIE as sent on every
+      version.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["cookie", "a=1; b=2"]
+    expect:
+      status: 200
+      env: { HTTP_COOKIE: "a=1; b=2" }
+
+  - id: http-cookie-crumbs-concatenated
+    tier: spec
+    source: "RFC 9113 section 8.2.3; RFC 9114 section 4.2.1"
+    level: MUST
+    summary: >-
+      Split cookie fields on h2/h3 MUST be joined with "; " before passing to
+      a non-HTTP/2 context, so the responder sees the same HTTP_COOKIE as an
+      h1 request with one Cookie field; a comma join is wrong.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["cookie", "a=1"]
+        - ["cookie", "b=2"]
+    expect:
+      status: 200
+      env: { HTTP_COOKIE: "a=1; b=2" }
+
+  - id: http-cookie-crumbs-keep-order
+    tier: spec
+    source: "RFC 9113 section 8.2.3; RFC 9114 section 4.2.1"
+    level: MUST
+    summary: >-
+      Three cookie crumbs are joined in the order received.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["cookie", "c=3"]
+        - ["cookie", "a=1"]
+        - ["cookie", "b=2"]
+    expect:
+      status: 200
+      env: { HTTP_COOKIE: "c=3; a=1; b=2" }
+
+  - id: http-cookie-crumbs-interleaved
+    tier: spec
+    source: "RFC 9113 section 8.2.3; RFC 9114 section 4.2.1"
+    level: MUST
+    summary: >-
+      Cookie crumbs separated by another field are still joined into one
+      HTTP_COOKIE value; the other field keeps its own meta-variable.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["cookie", "a=1"]
+        - ["x-between", "1"]
+        - ["cookie", "b=2"]
+    expect:
+      status: 200
+      env: { HTTP_COOKIE: "a=1; b=2", HTTP_X_BETWEEN: "1" }
+
+  # --- Field combination and naming ---
+
+  - id: http-field-lines-combined
+    tier: spec
+    source: "RFC 3875 section 4.1.18; RFC 9110 section 5.3"
+    level: MUST
+    summary: >-
+      Repeated field lines of a list field become one value, joined with a
+      comma and optional whitespace, on every version.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["accept-language", "de"]
+        - ["accept-language", "en"]
+    expect:
+      status: 200
+      env_match: { HTTP_ACCEPT_LANGUAGE: "^de, ?en$" }
+
+  - id: http-field-lines-combined-in-order
+    tier: spec
+    source: "RFC 9110 section 5.3"
+    level: MUST
+    summary: >-
+      The order of same-name field lines is significant; the combined value
+      keeps the received order on every version.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["x-multi", "c"]
+        - ["x-multi", "a"]
+        - ["x-multi", "b"]
+    expect:
+      status: 200
+      env_match: { HTTP_X_MULTI: "^c, ?a, ?b$" }
+
+  - id: http-h1-field-name-case-insensitive-combine
+    tier: spec
+    source: "RFC 9110 section 5.1; RFC 3875 section 4.1.18"
+    level: MUST
+    summary: >-
+      Field names are case-insensitive, so h1 lines X-Dup and x-dup are the
+      same field and combine into one HTTP_X_DUP value.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["X-Dup", "a"]
+        - ["x-dup", "b"]
+    expect:
+      status: 200
+      env_match: { HTTP_X_DUP: "^a, ?b$" }
+
+  - id: http-h1-mixed-case-name-mapped
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: >-
+      An h1 field name in mixed case is upper-cased with "-" replaced by "_",
+      giving the same meta-variable an h2/h3 lowercase name gives.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["x-MiXeD-Name", "v"]
+    expect:
+      status: 200
+      env: { HTTP_X_MIXED_NAME: "v" }
+
+  - id: http-lowercase-name-mapped
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: >-
+      A lowercase field name, the only form h2/h3 allow, maps to the same
+      upper-case HTTP_* name on every version.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["x-lower-name", "v"]
+    expect:
+      status: 200
+      env: { HTTP_X_LOWER_NAME: "v" }
+
+  - id: http-pseudo-headers-not-http-vars
+    tier: spec
+    source: "RFC 9113 section 8.3; RFC 9114 section 4.3; RFC 3875 section 4.1.18"
+    level: OBSERVED
+    summary: >-
+      Pseudo-header fields are not header fields, and HTTP_* variables come
+      from header fields, so :method, :path, :scheme and :authority produce
+      no HTTP_* variable. No keyword states this mapping directly, hence
+      OBSERVED.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+    expect:
+      status: 200
+      env_absent:
+        - "HTTP_:METHOD"
+        - "HTTP_:PATH"
+        - "HTTP_:SCHEME"
+        - "HTTP_:AUTHORITY"
+        - "HTTP__METHOD"
+        - "HTTP__PATH"
+        - "HTTP__SCHEME"
+        - "HTTP__AUTHORITY"
+
+  # --- Connection and hop-by-hop fields on h1 ---
+
+  - id: http-h1-connection-removed
+    tier: spec
+    source: "RFC 9110 section 7.6.1"
+    level: MUST
+    summary: >-
+      An intermediary removes the Connection field itself before forwarding;
+      HTTP_CONNECTION does not exist.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["Connection", "keep-alive"]
+    expect:
+      status: 200
+      env_absent: [HTTP_CONNECTION]
+
+  - id: http-h1-connection-option-field-removed
+    tier: spec
+    source: "RFC 9110 section 7.6.1"
+    level: MUST
+    summary: >-
+      A field named as a Connection option is removed with the Connection
+      field; HTTP_X_HOP does not exist.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["Connection", "X-Hop"]
+        - ["X-Hop", "1"]
+    expect:
+      status: 200
+      env_absent: [HTTP_X_HOP]
+
+  - id: http-h1-connection-option-case-insensitive
+    tier: spec
+    source: "RFC 9110 section 7.6.1"
+    level: MUST
+    summary: >-
+      Connection options are case-insensitive; an option spelled x-hop
+      removes the field X-Hop, and an option in a second Connection line
+      counts too.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["Connection", "keep-alive"]
+        - ["Connection", "x-hop"]
+        - ["X-Hop", "1"]
+    expect:
+      status: 200
+      env_absent: [HTTP_X_HOP, HTTP_CONNECTION]
+
+  - id: http-h1-connection-unlisted-field-kept
+    tier: spec
+    source: "RFC 9110 section 7.6.1"
+    level: MUST
+    summary: >-
+      Only fields named in Connection are removed; an end-to-end field next
+      to them still reaches the responder.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["Connection", "X-Hop"]
+        - ["X-Hop", "1"]
+        - ["X-Keep", "2"]
+    expect:
+      status: 200
+      env: { HTTP_X_KEEP: "2" }
+
+  - id: http-h1-keep-alive-removed
+    tier: spec
+    source: "RFC 9110 section 7.6.1"
+    level: SHOULD
+    summary: >-
+      Keep-Alive is known to require removal even when Connection does not
+      list it; HTTP_KEEP_ALIVE does not exist.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["Keep-Alive", "timeout=5"]
+    expect:
+      status: 200
+      env_absent: [HTTP_KEEP_ALIVE]
+
+  - id: http-h1-proxy-connection-removed
+    tier: spec
+    source: "RFC 9110 section 7.6.1"
+    level: SHOULD
+    summary: >-
+      Proxy-Connection is known to require removal; HTTP_PROXY_CONNECTION
+      does not exist.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["Proxy-Connection", "keep-alive"]
+    expect:
+      status: 200
+      env_absent: [HTTP_PROXY_CONNECTION]
+
+  - id: http-h1-upgrade-removed
+    tier: spec
+    source: "RFC 9110 section 7.6.1"
+    level: SHOULD
+    summary: >-
+      Upgrade is known to require removal; a server may ignore it (7.8) and
+      serve the request, and HTTP_UPGRADE does not exist.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["Upgrade", "example/1"]
+    expect:
+      status: 200
+      env_absent: [HTTP_UPGRADE]
+
+  - id: http-h1-te-listed-removed
+    tier: spec
+    source: "RFC 9110 sections 7.6.1 and 10.1.4"
+    level: MUST
+    summary: >-
+      TE is sent with a TE connection option (10.1.4); as a listed option it
+      is removed, and HTTP_TE does not exist.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["TE", "trailers"]
+        - ["Connection", "TE"]
+    expect:
+      status: 200
+      env_absent: [HTTP_TE, HTTP_CONNECTION]
+
+  - id: http-te-trailers-not-forwarded
+    tier: spec
+    source: "RFC 9110 section 7.6.1; RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: SHOULD
+    summary: >-
+      TE: trailers is the one connection-specific field h2/h3 allow; the
+      request is valid on every version, and TE is known to require removal,
+      so HTTP_TE does not exist.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["te", "trailers"]
+    expect:
+      status: 200
+      env_absent: [HTTP_TE]
+
+  # --- Connection-specific fields on h2/h3 are malformed ---
+
+  - id: http-h2-connection-malformed
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      A connection field makes an h2/h3 request malformed and it MUST NOT be
+      forwarded. The server MAY answer before resetting the stream (RFC 9113
+      8.1.1, RFC 9114 4.1.2); a reset alone is also conformant and cannot be
+      expressed here, so the case expects the 400 variant.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["connection", "keep-alive"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h2-keep-alive-malformed
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      A keep-alive field makes an h2/h3 request malformed; the responder
+      never runs. 400 is the response variant of the stream error.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["keep-alive", "timeout=5"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h2-proxy-connection-malformed
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      A proxy-connection field makes an h2/h3 request malformed; the
+      responder never runs. 400 is the response variant of the stream error.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["proxy-connection", "keep-alive"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h2-transfer-encoding-malformed
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      A transfer-encoding field makes an h2/h3 request malformed; the
+      responder never runs. 400 is the response variant of the stream error.
+    transports: [h2, h3]
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - ["transfer-encoding", "chunked"]
+      body: "hello"
+      framing: chunked
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h2-upgrade-malformed
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      An upgrade field makes an h2/h3 request malformed; the responder never
+      runs. 400 is the response variant of the stream error.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["upgrade", "example/1"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h2-te-other-than-trailers-malformed
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      TE in an h2/h3 request MUST NOT contain any value other than
+      "trailers"; te: gzip makes the request malformed and the responder
+      never runs. 400 is the response variant of the stream error.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["te", "gzip"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  # --- Other h2/h3 malformed requests ---
+
+  - id: http-h2-uppercase-field-name-malformed
+    tier: spec
+    source: "RFC 9113 sections 8.2 and 8.2.1; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      An uppercase character in an h2/h3 field name makes the request
+      malformed, unlike h1 where case is free; the responder never runs.
+      400 is the response variant of the stream error.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["X-Upper", "v"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h2-field-name-with-space-malformed
+    tier: spec
+    source: "RFC 9113 section 8.2.1"
+    level: MUST
+    summary: >-
+      A field name containing 0x20 makes an h2 request malformed; the
+      responder never runs. 400 is the response variant of the stream error.
+    transports: [h2]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["x bad", "v"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h2-field-value-with-lf-malformed
+    tier: spec
+    source: "RFC 9113 section 8.2.1"
+    level: MUST
+    summary: >-
+      A field value containing LF makes an h2 request malformed; the
+      responder never runs. 400 is the response variant of the stream error.
+    transports: [h2]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["x-bad", "a\nb"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h2-undefined-pseudo-header-malformed
+    tier: spec
+    source: "RFC 9113 section 8.3"
+    level: MUST
+    summary: >-
+      An undefined pseudo-header field makes an h2 request malformed; the
+      responder never runs. 400 is the response variant of the stream error.
+    transports: [h2]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [":foo", "bar"]
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  - id: http-h2-content-length-mismatch-malformed
+    tier: spec
+    source: "RFC 9113 section 8.1.1; RFC 9114 section 4.1.2"
+    level: MUST
+    summary: >-
+      A content-length that differs from the summed DATA payload makes an
+      h2/h3 request malformed; an intermediary MUST NOT forward it, so the
+      responder never runs. 400 is the response variant of the stream error.
+    transports: [h2, h3]
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - ["content-length", "10"]
+      body: "hello"
+      framing: chunked
+    expect:
+      reaches_responder: false
+      status_in: [400]
+
+  # --- Message body and CONTENT_LENGTH ---
+
+  - id: http-content-length-from-length-framing
+    tier: spec
+    source: "RFC 3875 section 4.1.2"
+    level: MUST
+    summary: >-
+      With a declared length, CONTENT_LENGTH is the body size in octets on
+      every version, and the responder reads exactly that many bytes.
+    request:
+      method: POST
+      target: "/dump.php"
+      body: "hello"
+      framing: length
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "5" }
+      stdin_length: 5
+      stdin_sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+  - id: http-content-length-without-declared-length
+    tier: spec
+    source: "RFC 3875 sections 4.1.2 and 4.2"
+    level: MUST
+    summary: >-
+      Chunked h1 and h2/h3 without content-length both reach the responder
+      with CONTENT_LENGTH set to the decoded body length, the same as when
+      the client declared it.
+    request:
+      method: POST
+      target: "/dump.php"
+      body: "hello"
+      framing: chunked
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "5" }
+      stdin_length: 5
+      stdin_sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+  - id: http-content-length-without-declared-length-large
+    tier: spec
+    source: "RFC 3875 sections 4.1.2 and 4.2"
+    level: MUST
+    summary: >-
+      A 3 MiB body without declared length (past the in-memory spool) still
+      reaches the responder with the exact CONTENT_LENGTH and bytes on every
+      version.
+    request:
+      method: POST
+      target: "/dump.php"
+      body_size: 3145728
+      framing: chunked
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "3145728" }
+      stdin_length: 3145728
+      stdin_sha256: "f6dd7fec8584ad00219a447071c1fa368a1caee4d9c146083d233713ddccd2c0"
+
+  - id: http-no-body-no-content-length
+    tier: spec
+    source: "RFC 3875 section 4.1.2"
+    level: MUST
+    summary: >-
+      CONTENT_LENGTH is set if and only if the request has a body; a GET
+      without one has no CONTENT_LENGTH on any version.
+    request:
+      method: GET
+      target: "/dump.php"
+      framing: none
+    expect:
+      status: 200
+      env_absent: [CONTENT_LENGTH]
+      stdin_length: 0
+
+  - id: http-transfer-encoding-not-forwarded
+    tier: spec
+    source: "RFC 9110 section 7.6.1"
+    level: SHOULD
+    summary: >-
+      Transfer-Encoding is known to require removal; after the h1 chunked
+      body is decoded no HTTP_TRANSFER_ENCODING reaches the responder, so h1
+      matches h2/h3 where the field cannot appear.
+    request:
+      method: POST
+      target: "/dump.php"
+      body: "hello"
+      framing: chunked
+    expect:
+      status: 200
+      env_absent: [HTTP_TRANSFER_ENCODING]
+
+  - id: http-content-length-not-http-var
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: >-
+      Content-Length is available as CONTENT_LENGTH, so no HTTP_CONTENT_LENGTH
+      exists on any version.
+    request:
+      method: POST
+      target: "/dump.php"
+      body: "hello"
+      framing: length
+    expect:
+      status: 200
+      env_absent: [HTTP_CONTENT_LENGTH]
+
+  - id: http-content-type-set
+    tier: spec
+    source: "RFC 3875 section 4.1.3"
+    level: MUST
+    summary: >-
+      CONTENT_TYPE is set from the content-type field on every version,
+      whatever the case of the field name on the wire.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - ["content-type", "text/plain"]
+      body: "hello"
+    expect:
+      status: 200
+      env: { CONTENT_TYPE: "text/plain" }
+
+  - id: http-content-type-not-http-var
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: >-
+      Content-Type is available as CONTENT_TYPE, so no HTTP_CONTENT_TYPE
+      exists on any version.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - ["content-type", "text/plain"]
+      body: "hello"
+    expect:
+      status: 200
+      env_absent: [HTTP_CONTENT_TYPE]
+
+  - id: http-authorization-not-http-var
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: >-
+      Authorization carries authentication information and is removed on
+      every version; no HTTP_AUTHORIZATION exists.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["authorization", "Basic dTpw"]
+    expect:
+      status: 200
+      env_absent: [HTTP_AUTHORIZATION]
+
+  # --- h1 framing and syntax errors ---
+
+  - id: http-h1-invalid-content-length-rejected
+    tier: server
+    source: "RFC 9112 section 6.3"
+    level: MUST
+    summary: >-
+      A request without Transfer-Encoding and with a non-numeric
+      Content-Length has invalid framing; the server MUST answer 400 and the
+      responder never runs.
+    transports: [h1]
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - ["Content-Length", "abc"]
+      framing: none
+    expect:
+      reaches_responder: false
+      status: 400
+
+  - id: http-h1-conflicting-content-lengths-rejected
+    tier: server
+    source: "RFC 9112 section 6.3; RFC 9110 section 8.6"
+    level: MUST
+    summary: >-
+      Two Content-Length lines with different values are an invalid
+      Content-Length; the server MUST answer 400 and the responder never
+      runs.
+    transports: [h1]
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - ["Content-Length", "5"]
+        - ["Content-Length", "6"]
+      framing: none
+    expect:
+      reaches_responder: false
+      status: 400
+
+  - id: http-h1-transfer-encoding-not-chunked-final-rejected
+    tier: server
+    source: "RFC 9112 sections 6.1 and 6.3"
+    level: MUST
+    summary: >-
+      A request whose Transfer-Encoding does not end in chunked has an
+      undeterminable length; the server MUST answer 400 (6.3), or 501 for a
+      coding it does not understand (6.1, SHOULD). The responder never runs.
+    transports: [h1]
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - ["Transfer-Encoding", "gzip"]
+      framing: none
+    expect:
+      reaches_responder: false
+      status_in: [400, 501]
+
+  - id: http-h1-space-before-colon-rejected
+    tier: server
+    source: "RFC 9112 section 5.1"
+    level: MUST
+    summary: >-
+      Whitespace between a field name and its colon MUST be rejected with
+      400; the responder never runs.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - ["X-Space ", "v"]
+    expect:
+      reaches_responder: false
+      status: 400
+
+  # --- Expect ---
+
+  - id: http-expect-100-continue-body-delivered
+    tier: spec
+    source: "RFC 9110 section 10.1.1"
+    level: MUST
+    summary: >-
+      A request with Expect: 100-continue gets a final status after the
+      content is processed; the responder reads the whole body on every
+      version.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - ["expect", "100-continue"]
+      body: "hello"
+      framing: length
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "5" }
+      stdin_length: 5
+
+  # --- Request line / pseudo-headers to CGI ---
+
+  - id: http-request-method-from-method
+    tier: spec
+    source: "RFC 3875 section 4.1.12"
+    level: MUST
+    summary: >-
+      REQUEST_METHOD equals the h1 request-line method and the h2/h3 :method.
+    request:
+      method: DELETE
+      target: "/dump.php"
+    expect:
+      status: 200
+      env: { REQUEST_METHOD: DELETE }
+
+  - id: http-query-string-from-path
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: >-
+      QUERY_STRING is the query of the h1 request-target and of the h2/h3
+      :path, still URL-encoded, identical on every version.
+    request:
+      method: GET
+      target: "/dump.php?a=1&b=%20"
+    expect:
+      status: 200
+      env: { QUERY_STRING: "a=1&b=%20" }
+
+  - id: http-empty-query-string
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: >-
+      Without a query QUERY_STRING is set to the empty string on every
+      version.
+    request:
+      method: GET
+      target: "/dump.php"
+    expect:
+      status: 200
+      env: { QUERY_STRING: "" }
+
+  - id: http-server-port
+    tier: spec
+    source: "RFC 3875 section 4.1.15"
+    level: MUST
+    summary: >-
+      SERVER_PORT is the port the request arrived on, 443, on every version,
+      including h3 over UDP.
+    request:
+      method: GET
+      target: "/dump.php"
+    expect:
+      status: 200
+      env: { SERVER_PORT: "443" }
+
+  # --- Responses: connection-specific fields must not be generated on h2/h3 ---
+
+  - id: http-h2-response-connection-dropped
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      A Connection header from the script is not generated in an h2/h3
+      response; the response stays well-formed and reaches the client.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/respond.php?header%5B%5D=Connection%3A%20close"
+    expect:
+      status: 200
+      headers: { X-Fixture: respond.php }
+      headers_absent: [Connection]
+
+  - id: http-h2-response-keep-alive-dropped
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      A Keep-Alive header from the script is not generated in an h2/h3
+      response.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/respond.php?header%5B%5D=Keep-Alive%3A%20timeout%3D5"
+    expect:
+      status: 200
+      headers: { X-Fixture: respond.php }
+      headers_absent: [Keep-Alive]
+
+  - id: http-h2-response-proxy-connection-dropped
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      A Proxy-Connection header from the script is not generated in an h2/h3
+      response.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/respond.php?header%5B%5D=Proxy-Connection%3A%20keep-alive"
+    expect:
+      status: 200
+      headers: { X-Fixture: respond.php }
+      headers_absent: [Proxy-Connection]
+
+  - id: http-h2-response-transfer-encoding-dropped
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      A Transfer-Encoding header from the script is not generated in an
+      h2/h3 response, and the body still arrives intact.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/respond.php?header%5B%5D=Transfer-Encoding%3A%20chunked&body=ok"
+    expect:
+      status: 200
+      headers: { X-Fixture: respond.php }
+      headers_absent: [Transfer-Encoding]
+      body: "ok"
+
+  - id: http-h2-response-upgrade-dropped
+    tier: spec
+    source: "RFC 9113 section 8.2.2; RFC 9114 section 4.2"
+    level: MUST
+    summary: >-
+      An Upgrade header from the script is not generated in an h2/h3
+      response.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/respond.php?header%5B%5D=Upgrade%3A%20websocket"
+    expect:
+      status: 200
+      headers: { X-Fixture: respond.php }
+      headers_absent: [Upgrade]

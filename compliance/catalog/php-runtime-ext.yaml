@@ -1,0 +1,833 @@
+# PHP runtime and extension behaviour through the gateway (tier app).
+# Expected values come from the php.net pages cited in `source`, from the
+# standard test vectors named there, or from an independent implementation
+# (OpenSSL CLI, pyca/cryptography). Cases marked OBSERVED assert behaviour of
+# this image (php:8.3-fpm, Debian ICU/libmagic/libgd) that php.net does not
+# state; where the bytes depend on a library version they assert structure.
+#
+# The pool sets display_errors off, so diagnostics go to the log, never the
+# body. php.net does not state the status of a fatal error; php-src
+# (main/main.c, php_error_cb) sends 500 when display_errors is off and no
+# header was sent yet, so those cases are OBSERVED.
+cases:
+  # ------------------------------------------------------------ runtime facts
+  - id: php-rt-sapi-name
+    tier: app
+    source: "php.net php_sapi_name, return values"
+    level: MUST
+    summary: php_sapi_name() reports fpm-fcgi for a request through php-fpm.
+    request: { method: GET, target: "/app/runtime/info.php?op=sapi" }
+    expect: { status: 200, body: "fpm-fcgi" }
+  - id: php-rt-version-family
+    tier: app
+    source: "php.net reserved.constants, PHP_MAJOR_VERSION and PHP_MINOR_VERSION"
+    level: OBSERVED
+    summary: The responder runs PHP 8.3, the version the app cases are written for.
+    request: { method: GET, target: "/app/runtime/info.php?op=version" }
+    expect: { status: 200, body: "8.3" }
+  - id: php-rt-request-time
+    tier: app
+    source: "php.net reserved.variables.server, REQUEST_TIME and REQUEST_TIME_FLOAT"
+    level: MUST
+    summary: REQUEST_TIME is an int and REQUEST_TIME_FLOAT a float of the same second, at most a few seconds before now.
+    request: { method: GET, target: "/app/runtime/info.php?op=request_time" }
+    expect: { status: 200, body: "true" }
+  - id: php-rt-opcache-enabled
+    tier: app
+    source: "php.net opcache_get_status; opcache.enable in compliance php.ini"
+    level: MUST
+    summary: opcache_get_status() returns an array with opcache_enabled true under php-fpm.
+    request: { method: GET, target: "/app/runtime/info.php?op=opcache" }
+    expect: { status: 200, body: "true" }
+  - id: php-rt-apcu-not-installed
+    tier: app
+    source: "php.net apcu_fetch; fixtures/php/Dockerfile installs no APCu"
+    level: OBSERVED
+    summary: APCu is not loaded, so cross-request user caches cannot hide per-request state.
+    request: { method: GET, target: "/app/runtime/info.php?op=apcu" }
+    expect: { status: 200, body: "false,false" }
+  - id: php-rt-timezone-utc
+    tier: app
+    source: "php.net date_default_timezone_get, return values"
+    level: MUST
+    summary: Without a configured timezone the default is UTC.
+    request: { method: GET, target: "/app/runtime/info.php?op=timezone" }
+    expect: { status: 200, body: "UTC" }
+  - id: php-rt-date-epoch-utc
+    tier: app
+    source: "php.net date"
+    level: MUST
+    summary: date() of timestamp 0 in the default timezone is the Unix epoch in UTC.
+    request: { method: GET, target: "/app/runtime/info.php?op=date_epoch" }
+    expect: { status: 200, body: "1970-01-01 00:00:00 UTC" }
+  - id: php-rt-getenv-pool-env
+    tier: app
+    source: "php.net install.fpm.configuration, clear_env and pool env options"
+    level: MUST
+    summary: getenv() returns a variable set with env[] in the pool.
+    request: { method: GET, target: "/app/runtime/info.php?op=getenv_state" }
+    expect: { status: 200, body: "'/state'" }
+  - id: php-rt-getenv-clear-env
+    tier: app
+    source: "php.net install.fpm.configuration, clear_env"
+    level: MUST
+    summary: With clear_env the image's PATH and PHPIZE_DEPS do not reach the worker.
+    request: { method: GET, target: "/app/runtime/info.php?op=getenv_cleared" }
+    expect: { status: 200, body: "false,false" }
+  # ----------------------------------------------------------- configuration
+  - id: php-rt-ini-memory-limit
+    tier: app
+    source: "php.net ini_get; compliance php.ini"
+    level: MUST
+    summary: ini_get returns memory_limit from php.ini as written.
+    request: { method: GET, target: "/app/runtime/ini.php?name=memory_limit" }
+    expect: { status: 200, body: "'64M'" }
+  - id: php-rt-ini-max-execution-time
+    tier: app
+    source: "php.net ini_get; compliance php.ini"
+    level: MUST
+    summary: ini_get returns max_execution_time from php.ini.
+    request: { method: GET, target: "/app/runtime/ini.php?name=max_execution_time" }
+    expect: { status: 200, body: "'5'" }
+  - id: php-rt-ini-display-errors-admin
+    tier: app
+    source: "php.net ini_get (an off boolean reads as \"\" or \"0\"); compliance pool.conf php_admin_flag"
+    level: MUST
+    summary: ini_get reports display_errors off, as the pool sets it with php_admin_flag.
+    request: { method: GET, target: "/app/runtime/ini.php?op=display_errors" }
+    expect: { status: 200, body: "off" }
+  - id: php-rt-ini-set-admin-refused
+    tier: app
+    source: "php.net install.fpm.configuration, php_admin_value and php_admin_flag"
+    level: MUST
+    summary: ini_set cannot override a php_admin_flag; it returns false and display_errors stays off.
+    request: { method: GET, target: "/app/runtime/ini.php?op=set_admin" }
+    expect: { status: 200, body: "false,off" }
+  - id: php-rt-ini-set-memory-limit
+    tier: app
+    source: "php.net ini_set, return values"
+    level: MUST
+    summary: ini_set returns the old value and the new value applies for the rest of the request.
+    request: { method: GET, target: "/app/runtime/ini.php?op=set_memory" }
+    expect: { status: 200, body: "'64M',96M" }
+
+  # ------------------------------------------------------- errors and throws
+  - id: php-rt-user-warning-not-in-body
+    tier: app
+    source: "php.net errorfunc.configuration, display_errors; php.net trigger_error, return values"
+    level: MUST
+    summary: With display_errors off an E_USER_WARNING never reaches the body; trigger_error returns true and the script continues.
+    request: { method: GET, target: "/app/runtime/errors.php?op=user_warning" }
+    expect: { status: 200, body: "before;after:true" }
+  - id: php-rt-error-get-last
+    tier: app
+    source: "php.net error_get_last; php.net errorfunc.constants, E_USER_WARNING"
+    level: MUST
+    summary: error_get_last reports the silenced E_USER_WARNING (512) with its message.
+    request: { method: GET, target: "/app/runtime/errors.php?op=user_warning_last" }
+    expect: { status: 200, body: "512:fixture user warning" }
+  - id: php-rt-uncaught-error-500
+    tier: app
+    source: "php.net language.errors.php7; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: An uncaught Error ends the script with 500; output before it is kept and the message stays out of the body.
+    request: { method: GET, target: "/app/runtime/errors.php?op=uncaught_error" }
+    expect: { status: 500, body: "before" }
+  - id: php-rt-uncaught-exception-500
+    tier: app
+    source: "php.net language.exceptions; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: An uncaught exception is a fatal error and ends the script with 500.
+    request: { method: GET, target: "/app/runtime/errors.php?op=uncaught_exception" }
+    expect: { status: 500, body: "before" }
+  - id: php-rt-user-error-500
+    tier: app
+    source: "php.net errorfunc.constants, E_USER_ERROR; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: E_USER_ERROR is fatal; the script stops with 500 before "after".
+    request: { method: GET, target: "/app/runtime/errors.php?op=user_error" }
+    expect: { status: 500, body: "before" }
+  - id: php-rt-exception-handler-status
+    tier: app
+    source: "php.net set_exception_handler"
+    level: MUST
+    summary: The exception handler runs for an uncaught exception and its status and body reach the client.
+    request: { method: GET, target: "/app/runtime/errors.php?op=exception_handler" }
+    expect: { status: 503, body: "handled:DomainException:to handler" }
+  - id: php-rt-destructor-exception-at-shutdown
+    tier: app
+    source: "php.net language.oop5.decon, destructors; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: An exception from a destructor at script termination is a fatal error; the buffered body is kept and the status becomes 500.
+    request: { method: GET, target: "/app/runtime/errors.php?op=destructor_shutdown" }
+    expect: { status: 500, body: "body" }
+  - id: php-rt-json-throw-uncaught-500
+    tier: app
+    source: "php.net json_encode, JSON_THROW_ON_ERROR; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: json_encode of invalid UTF-8 with JSON_THROW_ON_ERROR throws; uncaught, the request ends with 500 and an empty body.
+    request: { method: GET, target: "/app/runtime/errors.php?op=json_throw" }
+    expect: { status: 500, body: "" }
+  - id: php-rt-json-throw-caught
+    tier: app
+    source: "php.net json_encode; php.net json.constants, JSON_ERROR_UTF8"
+    level: MUST
+    summary: The JsonException carries code JSON_ERROR_UTF8 (5) and the json_last_error_msg text.
+    request: { method: GET, target: "/app/runtime/errors.php?op=json_throw_caught" }
+    expect: { status: 200, body: "JsonException:5:Malformed UTF-8 characters, possibly incorrectly encoded" }
+
+  # ------------------------------------------------------ language features
+  - id: php-rt-generator
+    tier: app
+    source: "php.net language.generators.overview, example #1"
+    level: MUST
+    summary: A generator yields its values in order within one request.
+    request: { method: GET, target: "/app/runtime/lang.php?op=generator" }
+    expect: { status: 200, body: "1\n2\n3\n" }
+  - id: php-rt-fiber
+    tier: app
+    source: "php.net language.fibers, example #1"
+    level: MUST
+    summary: A fiber suspends and resumes within one request as the manual's example shows.
+    request: { method: GET, target: "/app/runtime/lang.php?op=fiber" }
+    expect: { status: 200, body: "Value from fiber suspending: fiber\nValue used to resume fiber: test\n" }
+  # ------------------------------------------------- per-request state reset
+  - id: php-rt-state-fresh
+    tier: app
+    source: "php.net language.variables.scope, static variables"
+    level: OBSERVED
+    summary: Function statics, class statics, globals and constants start fresh in every request.
+    request: { method: GET, target: "/app/runtime/state.php" }
+    expect: { status: 200, body: "1,1,1,fresh" }
+
+  # ------------------------------------------------------------------ memory
+  - id: php-rt-memory-under-limit
+    tier: app
+    source: "php.net ini.core, memory_limit"
+    level: MUST
+    summary: A 16 MiB string fits under memory_limit=64M.
+    request: { method: GET, target: "/app/runtime/memory.php?mb=16" }
+    expect: { status: 200, body: "start;16777216;under" }
+  - id: php-rt-memory-over-limit-500
+    tier: app
+    source: "php.net ini.core, memory_limit; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: An 80 MiB allocation exceeds memory_limit=64M; the fatal error ends the request with 500.
+    request: { method: GET, target: "/app/runtime/memory.php?mb=80" }
+    expect: { status: 500 }
+  # ------------------------------------------------------------------ random
+  - id: php-rt-random-bytes-length
+    tier: app
+    source: "php.net random_bytes"
+    level: MUST
+    summary: random_bytes returns exactly the requested number of bytes.
+    request: { method: GET, target: "/app/runtime/random.php?op=bytes&n=32" }
+    expect: { status: 200, body: "32" }
+  - id: php-rt-random-bytes-zero
+    tier: app
+    source: "php.net random_bytes, errors/exceptions"
+    level: MUST
+    summary: random_bytes(0) throws a ValueError.
+    request: { method: GET, target: "/app/runtime/random.php?op=bytes_zero" }
+    expect: { status: 200, body: "ValueError" }
+  # -------------------------------------------------------------- filesystem
+  - id: php-rt-file-create-umask077
+    tier: app
+    source: "php.net umask"
+    level: MUST
+    summary: After umask(0077) a new file gets mode 0600.
+    request: { method: GET, target: "/app/runtime/fs.php?op=create_umask077" }
+    expect: { status: 200, body: "0600" }
+  - id: php-rt-tempnam-mode
+    tier: app
+    source: "php.net tempnam"
+    level: MUST
+    summary: tempnam creates the file with the given prefix and permission 0600.
+    request: { method: GET, target: "/app/runtime/fs.php?op=tempnam" }
+    expect: { status: 200, body: "true,0600" }
+
+  # ------------------------------------------------------------------ timing
+  - id: php-rt-usleep-duration
+    tier: app
+    source: "php.net usleep"
+    level: MUST
+    summary: usleep delays the response by at least the requested time.
+    request: { method: GET, target: "/app/runtime/timing.php?op=usleep&ms=300" }
+    expect: { status: 200, body: "slept", duration_min_ms: 300, duration_max_ms: 2000 }
+  - id: php-rt-sleep-not-execution-time
+    tier: app
+    source: "php.net set_time_limit, note on time outside script execution"
+    level: MUST
+    summary: Time in sleep() is a system call outside script execution, so 6 s of sleep survive max_execution_time=5.
+    request: { method: GET, target: "/app/runtime/timing.php?op=sleep&s=6" }
+    route: { timeout_ms: 9000 }
+    expect: { status: 200, body: "0", duration_min_ms: 6000 }
+  - id: php-rt-max-execution-time-500
+    tier: app
+    source: "php.net info.configuration, max_execution_time; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: A busy loop is stopped after max_execution_time=5 with a fatal error and 500; the output before it is kept.
+    request: { method: GET, target: "/app/runtime/timing.php?op=busy&s=7" }
+    route: { timeout_ms: 9000 }
+    expect: { status: 500, body: "start;", duration_min_ms: 4900, duration_max_ms: 6900 }
+  # ------------------------------------------------------------------ output
+  - id: php-rt-header-after-buffered-output
+    tier: app
+    source: "php.net outcontrol.configuration, output_buffering"
+    level: MUST
+    summary: Below output_buffering=4096 the headers are not sent yet, so header() after echo still works.
+    request: { method: GET, target: "/app/runtime/output.php?op=late_header" }
+    expect: { status: 200, headers: { X-Late: "1" }, body: "xfalse" }
+  - id: php-rt-header-after-buffer-overflow
+    tier: app
+    source: "php.net header"
+    level: MUST
+    summary: Once 8 KiB of output exceeded the buffer, headers are sent and a later header() has no effect.
+    request: { method: GET, target: "/app/runtime/output.php?op=header_after_overflow" }
+    expect: { status: 200, headers_absent: [X-Late], body_contains: "aaasent" }
+  - id: php-rt-fastcgi-finish-request
+    tier: app
+    source: "php.net fastcgi_finish_request"
+    level: MUST
+    summary: fastcgi_finish_request finishes the response; output after it is dropped and the 2 s of work after it do not delay the client.
+    request: { method: GET, target: "/app/runtime/output.php?op=finish_request" }
+    expect: { status: 200, body: "done", duration_max_ms: 1500 }
+  # ---------------------------------------------------------------- mbstring
+  - id: php-ext-mbstring-strlen
+    tier: app
+    source: "php.net mb_strlen; php.net strlen"
+    level: MUST
+    summary: "\"Grüße\" is 7 bytes for strlen and 8bit, 5 characters for mb_strlen."
+    request: { method: GET, target: "/app/ext/mbstring.php?op=strlen" }
+    expect: { status: 200, body: "7,5,7" }
+  - id: php-ext-mbstring-upper-full-mapping
+    tier: app
+    source: "php.net mb_convert_case, MB_CASE_UPPER full case mapping (Unicode SpecialCasing)"
+    level: MUST
+    summary: The full uppercase mapping of ß is SS.
+    request: { method: GET, target: "/app/ext/mbstring.php?op=upper" }
+    expect: { status: 200, body: "STRASSE" }
+  - id: php-ext-mbstring-upper-simple-mapping
+    tier: app
+    source: "php.net mb_convert_case, MB_CASE_UPPER_SIMPLE"
+    level: MUST
+    summary: The simple uppercase mapping keeps ß, which has no single-character uppercase.
+    request: { method: GET, target: "/app/ext/mbstring.php?op=upper_simple" }
+    expect: { status: 200, body: "STRAßE" }
+  - id: php-ext-mbstring-substr
+    tier: app
+    source: "php.net mb_substr"
+    level: MUST
+    summary: mb_substr counts characters where substr counts bytes.
+    request: { method: GET, target: "/app/ext/mbstring.php?op=substr" }
+    expect: { status: 200, body: "üß|c3bc" }
+  - id: php-ext-mbstring-detect-encoding
+    tier: app
+    source: "php.net mb_detect_encoding, strict mode"
+    level: MUST
+    summary: Strict detection returns UTF-8, ASCII, and false for bytes valid in neither.
+    request: { method: GET, target: "/app/ext/mbstring.php?op=detect" }
+    expect: { status: 200, body: "UTF-8,ASCII,false" }
+  # -------------------------------------------------------------------- intl
+  - id: php-ext-intl-number-de
+    tier: app
+    source: "php.net numberformatter.format, example #2"
+    level: MUST
+    summary: NumberFormatter de_DE DECIMAL formats the manual's number with German separators.
+    request: { method: GET, target: "/app/ext/intl.php?op=number_de" }
+    expect: { status: 200, body: "string(13) \"1.234.567,891\"\n" }
+  - id: php-ext-intl-currency-de-structure
+    tier: app
+    source: "php.net numberformatter.formatcurrency"
+    level: OBSERVED
+    summary: EUR in de_DE starts with 1.234,50 and ends with the euro sign; the separator between them depends on CLDR, so only structure is asserted.
+    request: { method: GET, target: "/app/ext/intl.php?op=currency_de" }
+    expect: { status: 200, body: "structure ok" }
+  - id: php-ext-intl-date-pattern-utc
+    tier: app
+    source: "php.net intldateformatter.format; ICU date format pattern syntax"
+    level: MUST
+    summary: An explicit pattern formats timestamp 1700000000 in UTC.
+    request: { method: GET, target: "/app/ext/intl.php?op=date_pattern" }
+    expect: { status: 200, body: "2023-11-14T22:13:20" }
+  - id: php-ext-intl-date-de-names
+    tier: app
+    source: "php.net intldateformatter.format"
+    level: OBSERVED
+    summary: German day and month names come from the ICU locale data.
+    request: { method: GET, target: "/app/ext/intl.php?op=date_de" }
+    expect: { status: 200, body: "Dienstag, 14. November 2023" }
+  - id: php-ext-intl-collator-sort
+    tier: app
+    source: "php.net collator.sort, example #1"
+    level: MUST
+    summary: The en_US collator sorts the manual's example to as, às, at.
+    request: { method: GET, target: "/app/ext/intl.php?op=collator" }
+    expect: { status: 200, body: "as,às,at" }
+  - id: php-ext-intl-collator-de-vs-sort
+    tier: app
+    source: "php.net collator.sort; php.net sort"
+    level: OBSERVED
+    summary: The de_DE collator sorts Ä with A, while sort() orders by bytes and puts Ä last.
+    request: { method: GET, target: "/app/ext/intl.php?op=collator_de" }
+    expect: { status: 200, body: "Äpfel,Birne,Zebra|Birne,Zebra,Äpfel" }
+  - id: php-ext-intl-normalizer-nfc
+    tier: app
+    source: "php.net normalizer.normalize, example #2"
+    level: MUST
+    summary: Precomposed and combining Å both normalise to the same NFC bytes.
+    request: { method: GET, target: "/app/ext/intl.php?op=normalizer" }
+    expect: { status: 200, body: "%C3%85 %C3%85" }
+  - id: php-ext-intl-transliterator
+    tier: app
+    source: "php.net transliterator.transliterate"
+    level: OBSERVED
+    summary: Latin-ASCII transliterates ü to u, ß to ss and Ç to C.
+    request: { method: GET, target: "/app/ext/intl.php?op=transliterator" }
+    expect: { status: 200, body: "Grusse Ca" }
+
+  # ------------------------------------------------------------------- iconv
+  - id: php-ext-iconv-latin1
+    tier: app
+    source: "php.net iconv"
+    level: MUST
+    summary: iconv converts UTF-8 to ISO-8859-1 byte for byte.
+    request: { method: GET, target: "/app/ext/iconv.php?op=latin1" }
+    expect: { status: 200, body: "4772fcdf65" }
+  # -------------------------------------------------------------------- json
+  - id: php-ext-json-pretty-print
+    tier: app
+    source: "php.net json.constants, JSON_PRETTY_PRINT"
+    level: MUST
+    summary: JSON_PRETTY_PRINT indents with four spaces and keeps an empty array on one line.
+    request: { method: GET, target: "/app/ext/json.php?op=pretty" }
+    expect: { status: 200, body: "{\n    \"a\": 1,\n    \"b\": [\n        1,\n        2\n    ],\n    \"c\": []\n}" }
+  - id: php-ext-json-unicode-escaping
+    tier: app
+    source: "php.net json.constants, JSON_UNESCAPED_UNICODE and JSON_UNESCAPED_SLASHES"
+    level: MUST
+    summary: By default ü and / are escaped; the flags leave them literal.
+    request: { method: GET, target: "/app/ext/json.php?op=unicode" }
+    expect: { status: 200, body: "\"\\u00fc\\/\" \"ü/\"" }
+  - id: php-ext-json-bigint
+    tier: app
+    source: "php.net json_decode, JSON_BIGINT_AS_STRING"
+    level: MUST
+    summary: An integer beyond PHP_INT_MAX decodes as a string with the flag and as a float without it.
+    request: { method: GET, target: "/app/ext/json.php?op=bigint" }
+    expect: { status: 200, body: "'12345678901234567890',double" }
+  - id: php-ext-json-decode-syntax-error
+    tier: app
+    source: "php.net json_last_error; php.net json_last_error_msg"
+    level: MUST
+    summary: Invalid JSON decodes to null with JSON_ERROR_SYNTAX (4) and "Syntax error".
+    request: { method: GET, target: "/app/ext/json.php?op=decode_error" }
+    expect: { status: 200, body: "NULL,4,Syntax error" }
+  # ------------------------------------------------------------------- ctype
+  - id: php-ext-ctype-digit
+    tier: app
+    source: "php.net ctype_digit, example #1"
+    level: MUST
+    summary: ctype_digit rejects a decimal point and other characters, and the empty string.
+    request: { method: GET, target: "/app/ext/ctype.php?op=digit" }
+    expect: { status: 200, body: "0100" }
+  # ------------------------------------------------------------------ filter
+  - id: php-ext-filter-email-valid
+    tier: app
+    source: "php.net filter.filters.validate, FILTER_VALIDATE_EMAIL"
+    level: MUST
+    summary: A plain address passes FILTER_VALIDATE_EMAIL and is returned.
+    request: { method: GET, target: "/app/ext/filter.php?op=email_ok" }
+    expect: { status: 200, body: "'joe@example.com'" }
+  - id: php-ext-filter-email-invalid
+    tier: app
+    source: "php.net filter.filters.validate, FILTER_VALIDATE_EMAIL"
+    level: MUST
+    summary: An address with two at signs fails.
+    request: { method: GET, target: "/app/ext/filter.php?op=email_bad" }
+    expect: { status: 200, body: "false" }
+  - id: php-ext-filter-int-in-range
+    tier: app
+    source: "php.net filter.filters.validate, FILTER_VALIDATE_INT min_range/max_range"
+    level: MUST
+    summary: An integer inside min_range..max_range is returned as int.
+    request: { method: GET, target: "/app/ext/filter.php?op=int_range_in" }
+    expect: { status: 200, body: "5" }
+  - id: php-ext-filter-int-out-of-range
+    tier: app
+    source: "php.net filter.filters.validate, FILTER_VALIDATE_INT min_range/max_range"
+    level: MUST
+    summary: An integer above max_range fails.
+    request: { method: GET, target: "/app/ext/filter.php?op=int_range_out" }
+    expect: { status: 200, body: "false" }
+  - id: php-ext-filter-url-valid
+    tier: app
+    source: "php.net filter.filters.validate, FILTER_VALIDATE_URL"
+    level: MUST
+    summary: An absolute https URL passes FILTER_VALIDATE_URL.
+    request: { method: GET, target: "/app/ext/filter.php?op=url_ok" }
+    expect: { status: 200, body: "'https://example.test/path?q=1'" }
+  - id: php-ext-filter-ip-flags
+    tier: app
+    source: "php.net filter.filters.flags, FILTER_FLAG_IPV4 and FILTER_FLAG_NO_PRIV_RANGE"
+    level: MUST
+    summary: ::1 is a valid IP but not IPv4, and 10.0.0.1 fails with FILTER_FLAG_NO_PRIV_RANGE.
+    request: { method: GET, target: "/app/ext/filter.php?op=ip" }
+    expect: { status: 200, body: "array (\n  0 => '::1',\n  1 => false,\n  2 => false,\n)" }
+  # -------------------------------------------------------------------- hash
+  - id: php-ext-hash-sha256
+    tier: app
+    source: "php.net hash; FIPS 180-2 appendix B.1 test vector"
+    level: MUST
+    summary: SHA-256 of "abc" is the FIPS test vector.
+    request: { method: GET, target: "/app/ext/hash.php?op=sha256" }
+    expect: { status: 200, body: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" }
+  - id: php-ext-hash-hmac-sha256
+    tier: app
+    source: "php.net hash_hmac; RFC 2104 HMAC-SHA256 of the pangram with key \"key\""
+    level: MUST
+    summary: HMAC-SHA256 of the quick-brown-fox pangram with key "key" matches the known value.
+    request: { method: GET, target: "/app/ext/hash.php?op=hmac" }
+    expect: { status: 200, body: "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8" }
+  - id: php-ext-hash-crc32b
+    tier: app
+    source: "php.net hash, crc32b (ISO-HDLC CRC-32)"
+    level: MUST
+    summary: crc32b of the quick-brown-fox pangram is 414fa339.
+    request: { method: GET, target: "/app/ext/hash.php?op=crc32b" }
+    expect: { status: 200, body: "414fa339" }
+  - id: php-ext-hash-hkdf
+    tier: app
+    source: "php.net hash_hkdf; RFC 5869 appendix A.1"
+    level: MUST
+    summary: HKDF-SHA256 with the RFC test case 1 inputs gives its OKM.
+    request: { method: GET, target: "/app/ext/hash.php?op=hkdf" }
+    expect: { status: 200, body: "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865" }
+  # ------------------------------------------------------------------ sodium
+  - id: php-ext-sodium-secretbox-deterministic
+    tier: app
+    source: "php.net sodium_crypto_secretbox; XSalsa20-Poly1305 computed independently with pyca/cryptography Poly1305"
+    level: MUST
+    summary: secretbox with a fixed key and nonce gives the same 16-byte tag plus ciphertext as an independent implementation.
+    request: { method: GET, target: "/app/ext/sodium.php?op=secretbox" }
+    expect: { status: 200, body: "691178a0a6e933cf40579c1446303bc59500b29111" }
+  - id: php-ext-sodium-secretbox-open
+    tier: app
+    source: "php.net sodium_crypto_secretbox_open"
+    level: MUST
+    summary: Opening the box with the same key and nonce returns the plaintext.
+    request: { method: GET, target: "/app/ext/sodium.php?op=secretbox_open" }
+    expect: { status: 200, body: "hello" }
+  - id: php-ext-sodium-secretbox-tampered
+    tier: app
+    source: "php.net sodium_crypto_secretbox_open, return values"
+    level: MUST
+    summary: A flipped bit makes authentication fail and open returns false.
+    request: { method: GET, target: "/app/ext/sodium.php?op=secretbox_tampered" }
+    expect: { status: 200, body: "false" }
+  - id: php-ext-sodium-generichash
+    tier: app
+    source: "php.net sodium_crypto_generichash; RFC 7693 BLAKE2b-256 (cross-checked with Python hashlib)"
+    level: MUST
+    summary: generichash of the empty string is BLAKE2b with a 32-byte digest.
+    request: { method: GET, target: "/app/ext/sodium.php?op=generichash" }
+    expect: { status: 200, body: "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8" }
+  # ----------------------------------------------------------------- openssl
+  - id: php-ext-openssl-aes128-fips197
+    tier: app
+    source: "php.net openssl_encrypt; FIPS-197 appendix C.1"
+    level: MUST
+    summary: One AES-128 block without padding gives the FIPS-197 ciphertext.
+    request: { method: GET, target: "/app/ext/openssl.php?op=aes_ecb_vector" }
+    expect: { status: 200, body: "69c4e0d86a7b0430d8cdb78070b4c55a" }
+  - id: php-ext-openssl-aes256-cbc
+    tier: app
+    source: "php.net openssl_encrypt (base64 output by default); cross-checked with the openssl enc CLI"
+    level: MUST
+    summary: AES-256-CBC with fixed key and IV gives the same base64 as the OpenSSL CLI.
+    request: { method: GET, target: "/app/ext/openssl.php?op=aes_cbc" }
+    expect: { status: 200, body: "qvegscXU1LjIq+qokewnVQ==" }
+  - id: php-ext-openssl-gcm-roundtrip
+    tier: app
+    source: "php.net openssl_encrypt; php.net openssl_decrypt, tag parameter"
+    level: MUST
+    summary: AES-256-GCM decrypts its own output and rejects a modified tag.
+    request: { method: GET, target: "/app/ext/openssl.php?op=roundtrip" }
+    expect: { status: 200, body: "hello gcm,9,false" }
+  # -------------------------------------------------------------------- zlib
+  - id: php-ext-zlib-gzip-roundtrip
+    tier: app
+    source: "php.net gzencode; php.net gzdecode"
+    level: MUST
+    summary: gzdecode restores what gzencode compressed, and repetitive data shrinks.
+    request: { method: GET, target: "/app/ext/zlib.php?op=gzip_roundtrip" }
+    expect: { status: 200, body: "true,true" }
+  - id: php-ext-zlib-output-compression
+    tier: app
+    source: "php.net zlib.configuration, zlib.output_compression"
+    level: MUST
+    summary: With zlib.output_compression and Accept-Encoding gzip the response is gzip-encoded and varies on Accept-Encoding.
+    request: { method: GET, target: "/app/ext/zlib.php?op=output_compression", headers: [[Accept-Encoding, gzip]] }
+    expect: { status: 200, headers: { Content-Encoding: gzip, Vary: Accept-Encoding } }
+  - id: php-ext-zlib-output-compression-not-accepted
+    tier: app
+    source: "php.net zlib.configuration, zlib.output_compression"
+    level: MUST
+    summary: Without Accept-Encoding the same script sends the plain body.
+    request: { method: GET, target: "/app/ext/zlib.php?op=output_compression" }
+    expect: { status: 200, headers_absent: [Content-Encoding], body_contains: "compress me compress me" }
+
+  # ---------------------------------------------------------------------- gd
+  - id: php-ext-gd-png-response
+    tier: app
+    source: "php.net imagepng; PNG specification, file signature and IHDR"
+    level: MUST
+    summary: A generated PNG served with Content-Type image/png arrives with its IHDR chunk intact.
+    request: { method: GET, target: "/app/ext/gd.php?op=png_serve" }
+    expect: { status: 200, headers: { Content-Type: image/png }, body_contains: "\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x02\0\0\0\x02" }
+  - id: php-ext-gd-png-structure
+    tier: app
+    source: "php.net getimagesizefromstring"
+    level: MUST
+    summary: The 2x2 PNG has the PNG signature and getimagesizefromstring reports 2x2, IMAGETYPE_PNG, image/png. Exact bytes depend on libgd and zlib, so they are not asserted.
+    request: { method: GET, target: "/app/ext/gd.php?op=png_info" }
+    expect: { status: 200, body: "89504e470d0a1a0a,2x2,IMAGETYPE_PNG,image/png" }
+  - id: php-ext-gd-jpeg
+    tier: app
+    source: "php.net imagejpeg; php.net getimagesizefromstring"
+    level: MUST
+    summary: imagejpeg works (gd built with JPEG) and the result is a 4x3 image/jpeg.
+    request: { method: GET, target: "/app/ext/gd.php?op=jpeg" }
+    expect: { status: 200, body: "ffd8ff,4x3,image/jpeg" }
+
+  # ---------------------------------------------------------------- fileinfo
+  - id: php-ext-fileinfo-png
+    tier: app
+    source: "php.net finfo.buffer"
+    level: MUST
+    summary: finfo identifies a generated PNG from its magic bytes.
+    request: { method: GET, target: "/app/ext/fileinfo.php?op=png" }
+    expect: { status: 200, body: "image/png" }
+  - id: php-ext-fileinfo-pdf
+    tier: app
+    source: "php.net finfo.buffer"
+    level: MUST
+    summary: finfo identifies %PDF- as application/pdf.
+    request: { method: GET, target: "/app/ext/fileinfo.php?op=pdf" }
+    expect: { status: 200, body: "application/pdf" }
+  - id: php-ext-fileinfo-text-charset
+    tier: app
+    source: "php.net fileinfo.constants, FILEINFO_MIME"
+    level: MUST
+    summary: FILEINFO_MIME adds the charset to the MIME type of plain ASCII text.
+    request: { method: GET, target: "/app/ext/fileinfo.php?op=text_charset" }
+    expect: { status: 200, body: "text/plain; charset=us-ascii" }
+
+  # --------------------------------------------------------------------- xml
+  - id: php-ext-dom-roundtrip
+    tier: app
+    source: "php.net domdocument.loadxml; php.net domdocument.savexml"
+    level: MUST
+    summary: DOMDocument parses and serialises a document with the XML declaration and a trailing newline.
+    request: { method: GET, target: "/app/ext/xml.php?op=dom_roundtrip" }
+    expect: { status: 200, body: "<?xml version=\"1.0\"?>\n<root><a x=\"1\">t</a><b/></root>\n" }
+  - id: php-ext-dom-build-escaping
+    tier: app
+    source: "php.net domdocument.createtextnode; php.net domdocument.savexml"
+    level: MUST
+    summary: Text nodes escape & and < and keep UTF-8 characters literal under encoding UTF-8.
+    request: { method: GET, target: "/app/ext/xml.php?op=dom_build" }
+    expect: { status: 200, body: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root><item id=\"1\">a &amp; b &lt; ü</item></root>\n" }
+  - id: php-ext-dom-xxe-not-loaded
+    tier: app
+    source: "php.net libxml_disable_entity_loader (external entities are not loaded by default with libxml >= 2.9)"
+    level: MUST
+    summary: An external entity is not expanded without LIBXML_NOENT, so no file content leaks into the document.
+    request: { method: GET, target: "/app/ext/xml.php?op=xxe" }
+    expect: { status: 200, body: "[]" }
+  - id: php-ext-simplexml
+    tier: app
+    source: "php.net simplexml_load_string; php.net simplexml.examples-basic"
+    level: MUST
+    summary: SimpleXML counts children and reads text and attributes.
+    request: { method: GET, target: "/app/ext/xml.php?op=simplexml" }
+    expect: { status: 200, body: "2,eight,7" }
+  - id: php-ext-xmlwriter
+    tier: app
+    source: "php.net xmlwriter.startdocument; php.net xmlwriter.text"
+    level: MUST
+    summary: XMLWriter writes the declaration, escapes text and ends the document with a newline.
+    request: { method: GET, target: "/app/ext/xml.php?op=xmlwriter" }
+    expect: { status: 200, body: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root><item id=\"1\">a &amp; b</item></root>\n" }
+  # -------------------------------------------------------------------- pcre
+  - id: php-ext-pcre-named-groups
+    tier: app
+    source: "php.net preg_match, example #4 (named subpatterns)"
+    level: MUST
+    summary: Named groups appear under their name and their number, so the manual's example has 5 entries.
+    request: { method: GET, target: "/app/ext/pcre.php?op=named" }
+    expect: { status: 200, body: "foobar,2008,foobar,5" }
+  - id: php-ext-pcre-utf8-modifier
+    tier: app
+    source: "php.net reference.pcre.pattern.modifiers, u (PCRE_UTF8)"
+    level: MUST
+    summary: With /u a dot matches a character, without it a byte.
+    request: { method: GET, target: "/app/ext/pcre.php?op=utf8_count" }
+    expect: { status: 200, body: "5,7" }
+  - id: php-ext-pcre-bad-utf8
+    tier: app
+    source: "php.net preg_last_error; php.net preg_last_error_msg"
+    level: MUST
+    summary: Invalid UTF-8 subject with /u fails with PREG_BAD_UTF8_ERROR.
+    request: { method: GET, target: "/app/ext/pcre.php?op=bad_utf8" }
+    expect: { status: 200, body: "false,PREG_BAD_UTF8_ERROR,Malformed UTF-8 characters, possibly incorrectly encoded" }
+  - id: php-ext-pcre-backtrack-limit
+    tier: app
+    source: "php.net preg_last_error, example #1"
+    level: MUST
+    summary: With JIT off and a low backtrack limit the manual's pattern ends in PREG_BACKTRACK_LIMIT_ERROR.
+    request: { method: GET, target: "/app/ext/pcre.php?op=backtrack" }
+    expect: { status: 200, body: "false,PREG_BACKTRACK_LIMIT_ERROR" }
+
+  # ------------------------------------------------------------------ sqlite
+  - id: php-ext-sqlite3-memory
+    tier: app
+    source: "php.net sqlite3.prepare; php.net sqlite3result.fetcharray; php.net sqlite3.querysingle"
+    level: MUST
+    summary: An in-memory SQLite3 database stores and returns rows with bound parameters.
+    request: { method: GET, target: "/app/ext/sqlite.php?op=sqlite3" }
+    expect: { status: 200, body: "1=a,2=b,3=c;3;3" }
+  - id: php-ext-pdo-sqlite-rollback
+    tier: app
+    source: "php.net pdo.rollback"
+    level: MUST
+    summary: A rolled-back insert leaves the in-memory table empty.
+    request: { method: GET, target: "/app/ext/sqlite.php?op=pdo_transaction" }
+    expect: { status: 200, body: "0" }
+
+  # -------------------------------------------------------------------- curl
+  - id: php-ext-curl-version
+    tier: app
+    source: "php.net curl_version"
+    level: MUST
+    summary: curl_version reports a dotted version and https among the protocols.
+    request: { method: GET, target: "/app/ext/curl.php?op=version" }
+    expect: { status: 200, body: "version ok,https" }
+  - id: php-ext-curl-connect-refused
+    tier: app
+    source: "php.net curl_errno; php.net curl.constants, CURLE_COULDNT_CONNECT"
+    level: MUST
+    summary: A connection to a closed loopback port fails fast with CURLE_COULDNT_CONNECT.
+    request: { method: GET, target: "/app/ext/curl.php?op=refused" }
+    expect: { status: 200, body: "false,CURLE_COULDNT_CONNECT", duration_max_ms: 1500 }
+  - id: php-ext-curl-unsupported-protocol
+    tier: app
+    source: "php.net curl_errno; php.net curl.constants, CURLE_UNSUPPORTED_PROTOCOL"
+    level: MUST
+    summary: An unknown URL scheme fails with CURLE_UNSUPPORTED_PROTOCOL without any network access.
+    request: { method: GET, target: "/app/ext/curl.php?op=unsupported" }
+    expect: { status: 200, body: "false,CURLE_UNSUPPORTED_PROTOCOL" }
+
+  # ------------------------------------------------------- posix, tokenizer
+  - id: php-ext-posix-pid
+    tier: app
+    source: "php.net posix_getpid; php.net getmypid; php.net posix_getppid"
+    level: MUST
+    summary: posix_getpid equals getmypid, and the worker has a parent (the php-fpm master).
+    request: { method: GET, target: "/app/ext/posix.php?op=pid" }
+    expect: { status: 200, body: "true,true" }
+  - id: php-ext-tokenizer-phptoken
+    tier: app
+    source: "php.net phptoken.tokenize, example #1"
+    level: MUST
+    summary: PhpToken::tokenize gives the manual's token list.
+    request: { method: GET, target: "/app/ext/tokenizer.php?op=phptoken" }
+    expect: { status: 200, body: "Line 1: T_OPEN_TAG ('<?php ')\nLine 1: T_ECHO ('echo')\nLine 1: ; (';')\nLine 1: T_WHITESPACE (' ')\nLine 1: T_CLOSE_TAG ('?>')\n" }
+
+scenarios:
+  - id: php-rt-state-not-shared-between-requests
+    tier: app
+    source: "php.net language.variables.scope, static variables"
+    level: OBSERVED
+    summary: Sequential and parallel requests, served by the same and by different children, each see fresh statics and globals.
+    steps:
+      - request: { method: GET, target: "/app/runtime/state.php" }
+        expect: { status: 200, body: "1,1,1,fresh" }
+      - request: { method: GET, target: "/app/runtime/state.php" }
+        expect: { status: 200, body: "1,1,1,fresh" }
+      - request: { method: GET, target: "/app/runtime/state.php" }
+        expect: { status: 200, body: "1,1,1,fresh" }
+      - request: { method: GET, target: "/app/runtime/state.php" }
+        expect: { status: 200, body: "1,1,1,fresh" }
+      - request: { method: GET, target: "/app/runtime/state.php" }
+        expect: { status: 200, body: "1,1,1,fresh" }
+      - parallel:
+          - request: { method: GET, target: "/app/runtime/state.php" }
+            expect: { status: 200, body: "1,1,1,fresh" }
+          - request: { method: GET, target: "/app/runtime/state.php" }
+            expect: { status: 200, body: "1,1,1,fresh" }
+          - request: { method: GET, target: "/app/runtime/state.php" }
+            expect: { status: 200, body: "1,1,1,fresh" }
+          - request: { method: GET, target: "/app/runtime/state.php" }
+            expect: { status: 200, body: "1,1,1,fresh" }
+
+  - id: php-rt-umask-restored-after-request
+    tier: app
+    source: "php.net umask"
+    level: MUST
+    summary: A request that changes the umask leaves the next requests with the original umask 0022.
+    steps:
+      - request: { method: GET, target: "/app/runtime/fs.php?op=set_umask" }
+        expect: { status: 200, body: "0022,0077" }
+      - request: { method: GET, target: "/app/runtime/fs.php?op=umask" }
+        expect: { status: 200, body: "0022" }
+      - request: { method: GET, target: "/app/runtime/fs.php?op=umask" }
+        expect: { status: 200, body: "0022" }
+      - request: { method: GET, target: "/app/runtime/fs.php?op=umask" }
+        expect: { status: 200, body: "0022" }
+      - request: { method: GET, target: "/app/runtime/fs.php?op=umask" }
+        expect: { status: 200, body: "0022" }
+
+  - id: php-rt-flock-nonblocking-across-children
+    tier: app
+    source: "php.net flock, LOCK_NB and would_block"
+    level: MUST
+    summary: While one request holds an exclusive lock, a non-blocking attempt in another child reports would block; afterwards the lock is free.
+    steps:
+      - parallel:
+          - request: { method: GET, target: "/app/runtime/lock.php?op=hold&hold_ms=1000" }
+            expect: { status: 200, body: "held" }
+          - request: { method: GET, target: "/app/runtime/lock.php?op=try&pre_ms=300" }
+            expect: { status: 200, body: "would block" }
+      - request: { method: GET, target: "/app/runtime/lock.php?op=try" }
+        expect: { status: 200, body: "acquired" }
+
+  - id: php-rt-flock-blocking-waits
+    tier: app
+    source: "php.net flock, LOCK_EX"
+    level: MUST
+    summary: A blocking exclusive lock in another child waits until the holder releases it.
+    steps:
+      - parallel:
+          - request: { method: GET, target: "/app/runtime/lock.php?op=hold&hold_ms=800" }
+            expect: { status: 200, body: "held" }
+          - request: { method: GET, target: "/app/runtime/lock.php?op=wait&pre_ms=200&min_ms=300" }
+            expect: { status: 200, body: "waited", duration_min_ms: 700 }
+
+  - id: php-ext-posix-parallel-requests-distinct-children
+    tier: app
+    source: "php.net install.fpm.configuration, pm and pm.max_children"
+    level: OBSERVED
+    summary: Three overlapping requests run in three different children, seen as three distinct posix_getpid values.
+    steps:
+      - request: { method: GET, target: "/app/ext/posix.php?op=reset" }
+        expect: { status: 200, body: "reset" }
+      - parallel:
+          - request: { method: GET, target: "/app/ext/posix.php?op=record&sleep_ms=600" }
+            expect: { status: 200, body: "recorded" }
+          - request: { method: GET, target: "/app/ext/posix.php?op=record&sleep_ms=600" }
+            expect: { status: 200, body: "recorded" }
+          - request: { method: GET, target: "/app/ext/posix.php?op=record&sleep_ms=600" }
+            expect: { status: 200, body: "recorded" }
+      - request: { method: GET, target: "/app/ext/posix.php?op=distinct" }
+        expect: { status: 200, body: "3" }

@@ -1,0 +1,182 @@
+# Cases for the library's own contract (docs/design.md), not for a specification.
+cases:
+  - id: gw-protected-header-dropped
+    tier: gateway
+    source: "docs/design.md, client headers cannot forge caller parameters, rule 1"
+    level: MUST
+    summary: A client header whose normalised name is protected never reaches the responder.
+    request: { method: GET, target: /dump, headers: [[x-auth-subject, "1"]] }
+    expect: { status: 200, env_absent: [HTTP_X_AUTH_SUBJECT] }
+  - id: gw-protected-prefix-dropped
+    tier: gateway
+    source: "docs/design.md, client headers cannot forge caller parameters, rule 1"
+    level: MUST
+    summary: A trailing star in a protected name matches every header with that prefix.
+    request: { method: GET, target: /dump, headers: [[x-auth-role, admin]] }
+    expect: { status: 200, env_absent: [HTTP_X_AUTH_ROLE] }
+  - id: gw-dotted-header-dropped
+    tier: gateway
+    source: "docs/design.md, client headers cannot forge caller parameters, rule 2"
+    level: MUST
+    summary: A header name with a dot is dropped, so it cannot fold into a protected name.
+    transports: [h1]
+    request: { method: GET, target: /dump, headers: [[X.Auth.Subject, "1"]] }
+    expect: { status: 200, env_absent: [HTTP_X_AUTH_SUBJECT] }
+  - id: gw-underscore-header-dropped
+    tier: gateway
+    source: "docs/design.md, client headers cannot forge caller parameters, rule 2"
+    level: MUST
+    summary: A header name with an underscore is dropped.
+    request: { method: GET, target: /dump, headers: [[x_auth_subject, "1"]] }
+    expect: { status: 200, env_absent: [HTTP_X_AUTH_SUBJECT] }
+  - id: gw-caller-param-wins-over-client
+    tier: gateway
+    source: "docs/design.md, parameters are written in a fixed order"
+    level: MUST
+    summary: A caller parameter replaces a client-derived value of the same name.
+    request: { method: GET, target: /dump, headers: [[x-auth-subject, "1"]] }
+    route: { params: { HTTP_X_AUTH_SUBJECT: "7" } }
+    expect: { status: 200, env: { HTTP_X_AUTH_SUBJECT: "7" } }
+  - id: gw-caller-param-overrides-meta-variable
+    tier: gateway
+    source: "docs/design.md, parameters are written in a fixed order"
+    level: MUST
+    summary: A caller parameter replaces a meta-variable such as HTTPS.
+    request: { method: GET, target: /dump }
+    route: { params: { HTTPS: "forced" } }
+    expect: { status: 200, env: { HTTPS: forced } }
+  - id: gw-body-over-limit-413
+    tier: gateway
+    source: "docs/design.md, options table, WithMaxBody"
+    level: MUST
+    summary: A body above the limit answers 413 without reaching the responder.
+    request: { method: POST, target: /dump, body_size: 10485761 }
+    expect: { status: 413, reaches_responder: false }
+  - id: gw-chunked-body-over-limit-413
+    tier: gateway
+    source: "docs/design.md, options table, WithMaxBody"
+    level: MUST
+    summary: A body of unknown length above the limit also answers 413.
+    request: { method: POST, target: /dump, body_size: 10485761, framing: chunked }
+    expect: { status: 413, reaches_responder: false }
+  - id: gw-spilled-body-intact
+    tier: gateway
+    source: "docs/design.md, both directions are buffered"
+    level: MUST
+    summary: A body above the in-memory limit spills to disk and arrives intact with exact CONTENT_LENGTH.
+    request: { method: POST, target: /dump, body_size: 3145728, framing: chunked }
+    expect: { status: 200, env: { CONTENT_LENGTH: "3145728" }, stdin_length: 3145728 }
+  - id: gw-x-powered-by-dropped
+    tier: gateway
+    source: "docs/design.md, options table, WithDropResponseHeaders"
+    level: MUST
+    summary: A configured response header never reaches the client.
+    request: { method: GET, target: "/respond?header[]=X-Powered-By%3A+fixture&body=ok" }
+    expect: { status: 200, headers_absent: [X-Powered-By], body: ok }
+  - id: gw-stderr-not-in-body
+    tier: gateway
+    source: "docs/design.md, the responder's output becomes the HTTP response"
+    level: MUST
+    summary: Responder stderr goes to the log, never into the body.
+    request: { method: GET, target: "/stderr?bytes=4096&interleave=1" }
+    expect: { status: 200, body_contains: oooo }
+  - id: gw-timeout-504
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: A call that reaches its deadline answers 504 and sends no responder output.
+    request: { method: GET, target: "/respond?sleep_ms=2000&body=late" }
+    route: { timeout_ms: 300 }
+    expect: { status: 504, reaches_responder: false, duration_max_ms: 1500 }
+  - id: gw-crash-before-output-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: A responder that dies before writing answers 502.
+    request: { method: GET, target: "/crash?after_bytes=0" }
+    expect: { status: 502, reaches_responder: false }
+  - id: gw-crash-after-flushed-output-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: Output flushed before a crash never reaches the client; the call answers 502.
+    request: { method: GET, target: "/crash?after_bytes=70000&flush=1&signal=SEGV" }
+    expect: { status: 502, reaches_responder: false }
+  - id: gw-abort-signal-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: A responder that aborts with SIGABRT answers 502.
+    request: { method: GET, target: "/crash?after_bytes=10&flush=1&signal=ABRT" }
+    expect: { status: 502, reaches_responder: false }
+  - id: gw-kill-signal-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: A responder killed with SIGKILL answers 502.
+    request: { method: GET, target: "/crash?after_bytes=10&flush=1&signal=KILL" }
+    expect: { status: 502, reaches_responder: false }
+  - id: gw-big-response-intact
+    tier: gateway
+    source: "docs/design.md, both directions are buffered"
+    level: MUST
+    summary: A response larger than the in-memory spool arrives complete.
+    request: { method: GET, target: "/big?bytes=5242880" }
+    expect: { status: 200, headers: { Content-Length: "5242880" } }
+  - id: gw-exitcode-response-stands
+    tier: gateway
+    source: "docs/design.md, the responder's output becomes the HTTP response"
+    level: MUST
+    summary: A non-zero application status is logged; the complete response stands.
+    request: { method: GET, target: "/exitcode?code=3" }
+    expect: { status: 200 }
+  - id: gw-malformed-missing-end-request-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: Broken responder framing (missing_end_request) answers 502 and never leaks output.
+    request: { method: GET, target: "/malformed?kind=missing_end_request" }
+    expect: { status: 502, reaches_responder: false, duration_max_ms: 6000 }
+  - id: gw-malformed-truncated-record-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: Broken responder framing (truncated_record) answers 502 and never leaks output.
+    request: { method: GET, target: "/malformed?kind=truncated_record" }
+    expect: { status: 502, reaches_responder: false, duration_max_ms: 6000 }
+  - id: gw-malformed-bad-version-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: Broken responder framing (bad_version) answers 502 and never leaks output.
+    request: { method: GET, target: "/malformed?kind=bad_version" }
+    expect: { status: 502, reaches_responder: false, duration_max_ms: 6000 }
+  - id: gw-malformed-wrong-request-id-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: Broken responder framing (wrong_request_id) answers 502 and never leaks output.
+    request: { method: GET, target: "/malformed?kind=wrong_request_id" }
+    expect: { status: 502, reaches_responder: false, duration_max_ms: 6000 }
+  - id: gw-malformed-no-header-terminator-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: Broken responder framing (no_header_terminator) answers 502 and never leaks output.
+    request: { method: GET, target: "/malformed?kind=no_header_terminator" }
+    expect: { status: 502, reaches_responder: false, duration_max_ms: 6000 }
+  - id: gw-malformed-oversized-header-block-502
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: Broken responder framing (oversized_header_block) answers 502 and never leaks output.
+    request: { method: GET, target: "/malformed?kind=oversized_header_block" }
+    expect: { status: 502, reaches_responder: false, duration_max_ms: 6000 }
+  - id: gw-malformed-stall-504
+    tier: gateway
+    source: "docs/design.md, a cancelled or failed call closes its connection"
+    level: MUST
+    summary: A responder that stalls after its header block answers 504 at the deadline.
+    request: { method: GET, target: "/malformed?kind=stall" }
+    route: { timeout_ms: 500 }
+    expect: { status: 504, reaches_responder: false, duration_max_ms: 2000 }

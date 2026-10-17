@@ -1,0 +1,1225 @@
+cases:
+  # --- 4.1.4 GATEWAY_INTERFACE ---
+  - id: rfc3875-req-gateway-interface
+    tier: spec
+    source: "RFC 3875 section 4.1.4"
+    level: MUST
+    summary: GATEWAY_INTERFACE names the CGI dialect this document defines, CGI/1.1.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { GATEWAY_INTERFACE: "CGI/1.1" }
+
+  - id: rfc3875-req-gateway-interface-not-from-header
+    tier: spec
+    source: "RFC 3875 section 4.1.4"
+    level: MUST
+    summary: A client header named Gateway-Interface cannot replace the GATEWAY_INTERFACE value the server must set.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [gateway-interface, "CGI/9.9"]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { GATEWAY_INTERFACE: "CGI/1.1" }
+
+  # --- 4.1.14 SERVER_NAME ---
+  - id: rfc3875-req-server-name
+    tier: spec
+    source: "RFC 3875 section 4.1.14"
+    level: MUST
+    summary: SERVER_NAME is the name of the server host the request is directed to.
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: example.test
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SERVER_NAME: example.test }
+
+  - id: rfc3875-req-server-name-without-port
+    tier: spec
+    source: "RFC 3875 section 4.1.14"
+    level: MUST
+    summary: SERVER_NAME holds the host name only when the request authority carries an explicit port.
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: "example.test:443"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SERVER_NAME: example.test }
+
+  # --- 4.1.15 SERVER_PORT ---
+  - id: rfc3875-req-server-port-default
+    tier: spec
+    source: "RFC 3875 section 4.1.15"
+    level: MUST
+    summary: SERVER_PORT is set to the receiving port even when it is the scheme default 443.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SERVER_PORT: "443" }
+
+  # --- 4.1.16 SERVER_PROTOCOL ---
+  - id: rfc3875-req-server-protocol-grammar
+    tier: spec
+    source: "RFC 3875 section 4.1.16"
+    level: MUST
+    summary: SERVER_PROTOCOL is set and matches the HTTP-Version grammar "HTTP" "/" 1*digit "." 1*digit.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_match: { SERVER_PROTOCOL: '^HTTP/[0-9]+\.[0-9]+$' }
+
+  - id: rfc3875-req-server-protocol-h1
+    tier: spec
+    source: "RFC 3875 section 4.1.16"
+    level: MUST
+    summary: SERVER_PROTOCOL is HTTP/1.1 for a request received over HTTP/1.1.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SERVER_PROTOCOL: "HTTP/1.1" }
+
+  - id: rfc3875-req-server-protocol-h2
+    tier: spec
+    source: "RFC 3875 section 4.1.16"
+    level: MUST
+    summary: SERVER_PROTOCOL is HTTP/2.0 for a request received over HTTP/2; the grammar requires a minor version digit.
+    transports: [h2]
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SERVER_PROTOCOL: "HTTP/2.0" }
+
+  - id: rfc3875-req-server-protocol-h3
+    tier: spec
+    source: "RFC 3875 section 4.1.16"
+    level: MUST
+    summary: SERVER_PROTOCOL is HTTP/3.0 for a request received over HTTP/3; the grammar requires a minor version digit.
+    transports: [h3]
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SERVER_PROTOCOL: "HTTP/3.0" }
+
+  # --- 4.1.17 SERVER_SOFTWARE ---
+  - id: rfc3875-req-server-software
+    tier: spec
+    source: "RFC 3875 section 4.1.17"
+    level: MUST
+    summary: SERVER_SOFTWARE is set to a product token with optional version, per the 1*( product | comment ) grammar.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_match: { SERVER_SOFTWARE: '^[A-Za-z0-9!#$%&*+.^_|~-]+(/[^ ]+)?( .+)?$' }
+
+  # --- 4.1.8 REMOTE_ADDR ---
+  - id: rfc3875-req-remote-addr
+    tier: spec
+    source: "RFC 3875 section 4.1.8"
+    level: MUST
+    summary: REMOTE_ADDR is the client network address as a bare IPv4 or IPv6 literal, without port or brackets.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_match: { REMOTE_ADDR: '^([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f]*:[0-9A-Fa-f:.]*:[0-9A-Fa-f.]*)$' }
+
+  - id: rfc3875-req-remote-addr-ignores-forwarded-header
+    tier: spec
+    source: "RFC 3875 section 4.1.8"
+    level: MUST
+    summary: REMOTE_ADDR is the address of the peer that sent the request (the suite on loopback), not a value from X-Forwarded-For.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [x-forwarded-for, "203.0.113.9"]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_match: { REMOTE_ADDR: '^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|::1|::ffff:127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})$' }
+
+  # --- 4.1.9 REMOTE_HOST ---
+  - id: rfc3875-req-remote-host
+    tier: spec
+    source: "RFC 3875 section 4.1.9"
+    level: SHOULD
+    summary: REMOTE_HOST is set to the client host name, or to the REMOTE_ADDR value when no name is available.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_match: { REMOTE_HOST: '^[A-Za-z0-9.:-]+$' }
+
+  # --- 4.1.12 REQUEST_METHOD ---
+  - id: rfc3875-req-method-get
+    tier: spec
+    source: "RFC 3875 section 4.1.12"
+    level: MUST
+    summary: REQUEST_METHOD is GET for a GET request.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { REQUEST_METHOD: GET }
+
+  - id: rfc3875-req-method-post
+    tier: spec
+    source: "RFC 3875 section 4.1.12"
+    level: MUST
+    summary: REQUEST_METHOD is POST for a POST request.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: "hello"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { REQUEST_METHOD: POST }
+
+  - id: rfc3875-req-method-put
+    tier: spec
+    source: "RFC 3875 section 4.1.12"
+    level: MUST
+    summary: REQUEST_METHOD is PUT, an extension-method in the grammar.
+    request:
+      method: PUT
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: "hello"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { REQUEST_METHOD: PUT }
+
+  - id: rfc3875-req-method-delete
+    tier: spec
+    source: "RFC 3875 section 4.1.12"
+    level: MUST
+    summary: REQUEST_METHOD is DELETE, an extension-method in the grammar.
+    request:
+      method: DELETE
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { REQUEST_METHOD: DELETE }
+
+  - id: rfc3875-req-method-options
+    tier: spec
+    source: "RFC 3875 section 4.1.12"
+    level: MUST
+    summary: REQUEST_METHOD is OPTIONS for an OPTIONS request with an origin-form target.
+    request:
+      method: OPTIONS
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { REQUEST_METHOD: OPTIONS }
+
+  - id: rfc3875-req-method-extension-token
+    tier: spec
+    source: "RFC 3875 section 4.1.12"
+    level: MUST
+    summary: REQUEST_METHOD carries an unregistered extension-method token unchanged.
+    request:
+      method: PURGE
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { REQUEST_METHOD: PURGE }
+
+  - id: rfc3875-req-method-case-sensitive
+    tier: spec
+    source: "RFC 3875 section 4.1.12"
+    level: MUST
+    summary: The method is case sensitive, so a lower-case "get" reaches REQUEST_METHOD as "get", not upper-cased.
+    request:
+      method: get
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { REQUEST_METHOD: get }
+
+  # --- 4.1.7 QUERY_STRING ---
+  - id: rfc3875-req-query-string-simple
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: QUERY_STRING holds the query component after "?".
+    request:
+      method: GET
+      target: "/dump.php?a=1&b=2"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "a=1&b=2" }
+
+  - id: rfc3875-req-query-string-absent-is-empty
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: Without a query component QUERY_STRING is still set, as the empty string.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "" }
+
+  - id: rfc3875-req-query-string-bare-question-mark
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: A target ending in a bare "?" yields QUERY_STRING set to the empty string.
+    request:
+      method: GET
+      target: "/dump.php?"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "" }
+
+  - id: rfc3875-req-query-string-stays-encoded
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: QUERY_STRING is the URL-encoded string as received; %20, %2F, %25 and %C3%A4 are not decoded.
+    request:
+      method: GET
+      target: "/dump.php?q=%20x%2Fy%25z&u=%C3%A4"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "q=%20x%2Fy%25z&u=%C3%A4" }
+
+  - id: rfc3875-req-query-string-plus-and-equals
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: A query made only of "+" and "=" reaches QUERY_STRING unchanged; "+" is not turned into a space.
+    request:
+      method: GET
+      target: "/dump.php?+=+&=="
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "+=+&==" }
+
+  - id: rfc3875-req-query-string-case-sensitive
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: QUERY_STRING is case-sensitive and keeps the case of names, values and hex digits as sent.
+    request:
+      method: GET
+      target: "/dump.php?Key=VaLuE&x=%c3%A4"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "Key=VaLuE&x=%c3%A4" }
+
+  - id: rfc3875-req-query-string-contains-question-mark
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: Only the first "?" separates path and query; later "?" characters stay in QUERY_STRING.
+    request:
+      method: GET
+      target: "/dump.php?a=b?c&d=?"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "a=b?c&d=?" }
+
+  - id: rfc3875-req-query-string-8kib
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: An 8 KiB query string reaches QUERY_STRING whole and unchanged.
+    request:
+      method: GET
+      target: "/dump.php?q=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "q=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd" }
+
+  # --- 4.1.13 / 3.3 SCRIPT_NAME ---
+  - id: rfc3875-req-script-name
+    tier: spec
+    source: "RFC 3875 section 4.1.13"
+    level: MUST
+    summary: SCRIPT_NAME is the URI path that identifies the script.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SCRIPT_NAME: "/dump.php" }
+
+  - id: rfc3875-req-script-name-excludes-path-info
+    tier: spec
+    source: "RFC 3875 section 4.1.13"
+    level: MUST
+    summary: No PATH_INFO segment is included in SCRIPT_NAME.
+    request:
+      method: GET
+      target: "/dump.php/extra/more"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SCRIPT_NAME: "/dump.php" }
+
+  - id: rfc3875-req-script-name-excludes-query
+    tier: spec
+    source: "RFC 3875 section 4.1.13"
+    level: MUST
+    summary: SCRIPT_NAME is a path and does not carry the query component.
+    request:
+      method: GET
+      target: "/dump.php?x=1"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SCRIPT_NAME: "/dump.php" }
+
+  - id: rfc3875-req-script-name-keeps-url-prefix
+    tier: spec
+    source: "RFC 3875 section 3.3"
+    level: MUST
+    summary: SCRIPT_NAME is the request path prefix that selects the script (/app/dump.php), so the Script-URI re-runs the same script.
+    request:
+      method: GET
+      target: "/app/dump.php/x"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { SCRIPT_NAME: "/app/dump.php" }
+
+  - id: rfc3875-req-script-name-empty-front-controller
+    tier: spec
+    source: "RFC 3875 section 4.1.13"
+    level: MUST
+    summary: When the route maps the whole path to path_info, SCRIPT_NAME is the empty path and is still set.
+    request:
+      method: GET
+      target: "/users/7"
+    route:
+      script: dump.php
+      path_info: /users/7
+    expect:
+      status: 200
+      env: { SCRIPT_NAME: "" }
+
+  # --- 4.1.5 / 3.3 PATH_INFO ---
+  - id: rfc3875-req-path-info-from-route
+    tier: spec
+    source: "RFC 3875 section 3.3"
+    level: MUST
+    summary: With SCRIPT_NAME empty, PATH_INFO is the full route path so SCRIPT_NAME + PATH_INFO rebuild the request path.
+    request:
+      method: GET
+      target: "/users/7"
+    route:
+      script: dump.php
+      path_info: /users/7
+    expect:
+      status: 200
+      env: { PATH_INFO: /users/7 }
+
+  - id: rfc3875-req-path-info-extra-path
+    tier: spec
+    source: "RFC 3875 section 4.1.5"
+    level: MUST
+    summary: PATH_INFO is the path after the script-identifying part of the request path.
+    request:
+      method: GET
+      target: "/dump.php/extra"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { PATH_INFO: /extra }
+
+  - id: rfc3875-req-path-info-absent
+    tier: spec
+    source: "RFC 3875 section 4.1.5"
+    level: MUST
+    summary: Without extra path PATH_INFO is NULL; the case asserts it is left unset.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [PATH_INFO]
+
+  - id: rfc3875-req-path-info-single-slash
+    tier: spec
+    source: "RFC 3875 section 4.1.5"
+    level: MUST
+    summary: A trailing "/" after the script gives PATH_INFO "/", a single void path segment, not NULL.
+    request:
+      method: GET
+      target: "/dump.php/"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { PATH_INFO: / }
+
+  - id: rfc3875-req-path-info-decodes-space
+    tier: spec
+    source: "RFC 3875 section 4.1.5"
+    level: MUST
+    summary: PATH_INFO is not URL-encoded, so %20 in the request path arrives as a space.
+    request:
+      method: GET
+      target: "/dump.php/a%20b"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { PATH_INFO: "/a b" }
+
+  - id: rfc3875-req-path-info-decodes-percent
+    tier: spec
+    source: "RFC 3875 section 4.1.5"
+    level: MUST
+    summary: PATH_INFO is not URL-encoded, so %25 arrives as a single "%" and is decoded only once.
+    request:
+      method: GET
+      target: "/dump.php/100%25/%2541"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { PATH_INFO: "/100%/%41" }
+
+  - id: rfc3875-req-path-info-preserves-case
+    tier: spec
+    source: "RFC 3875 section 4.1.5"
+    level: MUST
+    summary: The server preserves the case of PATH_INFO as presented in the request URI.
+    request:
+      method: GET
+      target: "/dump.php/Mixed/CASE/path"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { PATH_INFO: /Mixed/CASE/path }
+
+  - id: rfc3875-req-path-info-multiple-segments
+    tier: spec
+    source: "RFC 3875 section 4.1.5"
+    level: MUST
+    summary: PATH_INFO keeps every segment after the script, including an empty segment from "//".
+    request:
+      method: GET
+      target: "/dump.php/a//b/c"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { PATH_INFO: "/a//b/c" }
+
+  - id: rfc3875-req-path-info-excludes-query
+    tier: spec
+    source: "RFC 3875 section 4.1.5"
+    level: MUST
+    summary: PATH_INFO ends before "?"; the query goes to QUERY_STRING only.
+    request:
+      method: GET
+      target: "/dump.php/x?y=1"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { PATH_INFO: /x }
+
+  - id: rfc3875-req-query-string-with-path-info
+    tier: spec
+    source: "RFC 3875 section 4.1.7"
+    level: MUST
+    summary: QUERY_STRING is taken from the query component when the path also carries PATH_INFO.
+    request:
+      method: GET
+      target: "/dump.php/x?y=1"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { QUERY_STRING: "y=1" }
+
+  # --- 4.1.6 PATH_TRANSLATED ---
+  - id: rfc3875-req-path-translated-set
+    tier: spec
+    source: "RFC 3875 section 4.1.6"
+    level: SHOULD
+    summary: With a path-info component PATH_TRANSLATED is set; the mapping is implementation-defined, so only the PATH_INFO suffix is checked.
+    request:
+      method: GET
+      target: "/dump.php/extra"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_match: { PATH_TRANSLATED: '^/.*/extra$' }
+
+  - id: rfc3875-req-path-translated-absent
+    tier: spec
+    source: "RFC 3875 section 4.1.6"
+    level: MUST
+    summary: When PATH_INFO is NULL, PATH_TRANSLATED is NULL or unset; the case asserts it is unset.
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [PATH_TRANSLATED]
+
+  # --- 4.1.2 CONTENT_LENGTH / 4.2 message-body ---
+  - id: rfc3875-req-content-length-body
+    tier: spec
+    source: "RFC 3875 section 4.1.2"
+    level: MUST
+    summary: CONTENT_LENGTH is the decimal byte count of the request body.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: "hello"
+      framing: length
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "5" }
+
+  - id: rfc3875-req-content-length-absent-get
+    tier: spec
+    source: "RFC 3875 section 4.1.2"
+    level: MUST
+    summary: A GET without a message-body has no CONTENT_LENGTH (if and only if a body is present).
+    request:
+      method: GET
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [CONTENT_LENGTH]
+
+  - id: rfc3875-req-content-length-absent-post-no-body
+    tier: spec
+    source: "RFC 3875 section 4.1.2"
+    level: MUST
+    summary: A POST with no length information and no body has no message-body, so CONTENT_LENGTH is unset.
+    request:
+      method: POST
+      target: "/dump.php"
+      framing: none
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [CONTENT_LENGTH]
+
+  - id: rfc3875-req-content-length-absent-delete
+    tier: spec
+    source: "RFC 3875 section 4.1.2"
+    level: MUST
+    summary: A DELETE without a body has no CONTENT_LENGTH.
+    request:
+      method: DELETE
+      target: "/dump.php"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [CONTENT_LENGTH]
+
+  - id: rfc3875-req-content-length-zero
+    tier: spec
+    source: "RFC 3875 section 4.1.2"
+    level: MUST
+    summary: "Content-Length: 0 frames a zero-length message-body (RFC 9112 section 6.3), so CONTENT_LENGTH is \"0\"."
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: ""
+      framing: length
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "0" }
+      stdin_length: 0
+
+  - id: rfc3875-req-content-length-chunked-decoded
+    tier: spec
+    source: "RFC 3875 section 4.2"
+    level: MUST
+    summary: For a body without Content-Length (chunked on h1, unsized frames on h2/h3) CONTENT_LENGTH is the decoded length.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: "hello world"
+      framing: chunked
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "11" }
+
+  - id: rfc3875-req-chunked-body-bytes
+    tier: spec
+    source: "RFC 3875 section 4.2"
+    level: MUST
+    summary: Transfer-codings are removed from the body; the responder reads the decoded bytes only.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: "hello world"
+      framing: chunked
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      stdin_length: 11
+      stdin_sha256: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+
+  - id: rfc3875-req-content-length-chunked-1mib
+    tier: spec
+    source: "RFC 3875 section 4.2"
+    level: MUST
+    summary: A 1 MiB unsized body gets CONTENT_LENGTH equal to its decoded size.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, application/octet-stream]
+      body_size: 1048576
+      framing: chunked
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "1048576" }
+      stdin_length: 1048576
+
+  - id: rfc3875-req-content-length-chunked-empty
+    tier: spec
+    source: "RFC 3875 section 4.1.2"
+    level: MUST
+    summary: "Transfer-Encoding: chunked with only the last-chunk frames a zero-length body (RFC 9112 section 6.1), so CONTENT_LENGTH is \"0\"."
+    transports: [h1]
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: ""
+      framing: chunked
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "0" }
+      stdin_length: 0
+
+  - id: rfc3875-req-body-bytes-available
+    tier: spec
+    source: "RFC 3875 section 4.2"
+    level: MUST
+    summary: The server makes at least CONTENT_LENGTH bytes of the body available, byte for byte.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: "hello"
+      framing: length
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      stdin_length: 5
+      stdin_sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+  - id: rfc3875-req-body-64kib-put
+    tier: spec
+    source: "RFC 3875 section 4.2"
+    level: MUST
+    summary: A 64 KiB PUT body is delivered whole and CONTENT_LENGTH matches it.
+    request:
+      method: PUT
+      target: "/dump.php"
+      headers:
+        - [content-type, application/octet-stream]
+      body_size: 65536
+      framing: length
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_LENGTH: "65536" }
+      stdin_length: 65536
+
+  # --- 4.1.3 CONTENT_TYPE ---
+  - id: rfc3875-req-content-type
+    tier: spec
+    source: "RFC 3875 section 4.1.3"
+    level: MUST
+    summary: CONTENT_TYPE is set from the Content-Type request header.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: "hello"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_TYPE: text/plain }
+
+  - id: rfc3875-req-content-type-parameters
+    tier: spec
+    source: "RFC 3875 section 4.1.3"
+    level: MUST
+    summary: CONTENT_TYPE keeps media-type parameters such as charset.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, "application/json; charset=utf-8"]
+      body: "{}"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_TYPE: "application/json; charset=utf-8" }
+
+  - id: rfc3875-req-content-type-multipart-boundary
+    tier: spec
+    source: "RFC 3875 section 4.1.3"
+    level: MUST
+    summary: CONTENT_TYPE keeps the multipart boundary parameter unchanged, including its case.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, "multipart/form-data; boundary=----AbC123"]
+      body: "------AbC123--\r\n"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_TYPE: "multipart/form-data; boundary=----AbC123" }
+
+  - id: rfc3875-req-content-type-without-body
+    tier: spec
+    source: "RFC 3875 section 4.1.3"
+    level: MUST
+    summary: CONTENT_TYPE is set whenever the Content-Type header is present, even on a GET without a body.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { CONTENT_TYPE: text/plain }
+
+  - id: rfc3875-req-content-type-no-default
+    tier: spec
+    source: "RFC 3875 section 4.1.3"
+    level: MUST
+    summary: CONTENT_TYPE has no default value, so a body sent without Content-Type leaves it unset.
+    request:
+      method: POST
+      target: "/dump.php"
+      body: "hello"
+      framing: length
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [CONTENT_TYPE]
+
+  # --- 4.1.18 protocol-specific meta-variables ---
+  - id: rfc3875-req-http-user-agent
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: The User-Agent header is passed as HTTP_USER_AGENT.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [user-agent, "compliance/1.0 (test)"]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { HTTP_USER_AGENT: "compliance/1.0 (test)" }
+
+  - id: rfc3875-req-http-dash-to-underscore
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: A header name has "-" replaced with "_", is upper-cased and gets the HTTP_ prefix.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [x-custom-header-name, v1]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { HTTP_X_CUSTOM_HEADER_NAME: v1 }
+
+  - id: rfc3875-req-http-mixed-case-name
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: A mixed-case header name is converted to upper case for the meta-variable name.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [X-MiXeD-Name, v1]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { HTTP_X_MIXED_NAME: v1 }
+
+  - id: rfc3875-req-http-value-case-preserved
+    tier: spec
+    source: "RFC 3875 section 4.1"
+    level: MUST
+    summary: Meta-variable values are case-sensitive, so a header value arrives with its case unchanged.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [x-case, "MiXeD Value"]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { HTTP_X_CASE: "MiXeD Value" }
+
+  - id: rfc3875-req-http-host-h1
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: The Host header is passed as HTTP_HOST.
+    transports: [h1]
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: example.test
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { HTTP_HOST: example.test }
+
+  - id: rfc3875-req-http-host-from-authority
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: OBSERVED
+    summary: "OBSERVED: RFC 3875 predates HTTP/2; gateways conventionally expose :authority as HTTP_HOST."
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      authority: example.test
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { HTTP_HOST: example.test }
+
+  - id: rfc3875-req-http-repeated-header-combined
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: MUST
+    summary: Two fields with the same name are rewritten as one comma-separated value with the same semantics (RFC 9110 section 5.3).
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [x-multi, a]
+        - [x-multi, b]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_match: { HTTP_X_MULTI: '^a,[ \t]*b$' }
+
+  - id: rfc3875-req-http-repeated-header-order
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: MUST
+    summary: Combining repeated fields keeps their received order, because order is part of their semantics.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [accept, text/html]
+        - [x-other, between]
+        - [accept, application/json]
+        - [accept, "*/*;q=0.1"]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_match: { HTTP_ACCEPT: '^text/html,[ \t]*application/json,[ \t]*\*/\*;q=0\.1$' }
+
+  - id: rfc3875-req-http-split-cookie-joined
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: MUST
+    summary: Split cookie fields are rewritten as one value joined by "; " (RFC 9113 section 8.2.3), the only joiner with the same semantics.
+    transports: [h2, h3]
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [cookie, a=1]
+        - [cookie, b=2]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env: { HTTP_COOKIE: "a=1; b=2" }
+
+  - id: rfc3875-req-http-no-content-length
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: Content-Length is available as CONTENT_LENGTH, so HTTP_CONTENT_LENGTH is not set.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: "hello"
+      framing: length
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [HTTP_CONTENT_LENGTH]
+
+  - id: rfc3875-req-http-no-content-type
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: Content-Type is available as CONTENT_TYPE, so HTTP_CONTENT_TYPE is not set.
+    request:
+      method: POST
+      target: "/dump.php"
+      headers:
+        - [content-type, text/plain]
+      body: "hello"
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [HTTP_CONTENT_TYPE]
+
+  - id: rfc3875-req-http-no-authorization
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: The Authorization header carries authentication information and is not passed as HTTP_AUTHORIZATION.
+    waived: "docs/design.md: the gateway passes Authorization as HTTP_AUTHORIZATION, as nginx and Caddy do; applications need it for Basic and Bearer auth."
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [authorization, "Basic YWxpY2U6c2VjcmV0"]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [HTTP_AUTHORIZATION]
+
+  - id: rfc3875-req-http-no-proxy-authorization
+    tier: spec
+    source: "RFC 3875 section 4.1.18"
+    level: SHOULD
+    summary: Proxy-Authorization carries authentication information and is not passed as HTTP_PROXY_AUTHORIZATION.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [proxy-authorization, "Basic YWxpY2U6c2VjcmV0"]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [HTTP_PROXY_AUTHORIZATION]
+
+  # --- 4.1.1 AUTH_TYPE / 4.1.11 REMOTE_USER ---
+  - id: rfc3875-req-auth-type-from-authenticating-layer
+    tier: spec
+    source: "RFC 3875 section 4.1.1"
+    level: MUST
+    summary: When the caller authenticated the request and sets AUTH_TYPE, the responder receives it unchanged.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [authorization, "Basic YWxpY2U6c2VjcmV0"]
+    route:
+      script: dump.php
+      params: { AUTH_TYPE: Basic, REMOTE_USER: alice }
+    expect:
+      status: 200
+      env: { AUTH_TYPE: Basic }
+
+  - id: rfc3875-req-remote-user-from-authenticating-layer
+    tier: spec
+    source: "RFC 3875 section 4.1.11"
+    level: MUST
+    summary: When the request required authentication, REMOTE_USER is the user-ID the authenticating layer supplied.
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [authorization, "Basic YWxpY2U6c2VjcmV0"]
+    route:
+      script: dump.php
+      params: { AUTH_TYPE: Basic, REMOTE_USER: alice }
+    expect:
+      status: 200
+      env: { REMOTE_USER: alice }
+
+  - id: rfc3875-req-auth-type-absent-without-authentication
+    tier: spec
+    source: "RFC 3875 section 4.1.1"
+    level: OBSERVED
+    summary: "OBSERVED: the RFC sets AUTH_TYPE only when access required authentication; with an unchecked Authorization header it stays unset."
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [authorization, "Basic YWxpY2U6c2VjcmV0"]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [AUTH_TYPE]
+
+  - id: rfc3875-req-remote-user-absent-without-authentication
+    tier: spec
+    source: "RFC 3875 section 4.1.11"
+    level: OBSERVED
+    summary: "OBSERVED: the RFC sets REMOTE_USER only after required authentication; credentials the gateway did not verify do not become REMOTE_USER."
+    request:
+      method: GET
+      target: "/dump.php"
+      headers:
+        - [authorization, "Basic YWxpY2U6c2VjcmV0"]
+    route:
+      script: dump.php
+    expect:
+      status: 200
+      env_absent: [REMOTE_USER]

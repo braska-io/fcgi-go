@@ -1,0 +1,1100 @@
+# PHP application behaviour through the gateway: PDO with SQLite, and the
+# request lifecycle (abort, fastcgi_finish_request, shutdown functions,
+# destructors, exit, time and memory limits, error output).
+# Scripts: fixtures/php/app/pdo/ and fixtures/php/app/lifecycle/.
+# State: $FIXTURE_STATE/{app,marks,persist,lock}.db, see app/pdo/_db.php.
+#
+# Settings these cases assume (fixtures/php/php.ini, pool.conf): pm static
+# with 4 children, max_execution_time 5, memory_limit 64M,
+# output_buffering 4096, php_admin_flag[display_errors] = off,
+# php_admin_value[error_log] empty, log_errors on.
+#
+# php.net documents no HTTP status for a fatal error. The OBSERVED status
+# cases follow php-src main/main.c (php_error_cb): with display_errors off
+# and no headers sent, a fatal error replaces status 200 with 500.
+cases:
+  # ================================================================ PDO
+  # ------------------------------------------------------------ connect
+  - id: php-pdo-driver-name
+    tier: app
+    source: "php.net PDO::getAttribute; php.net PDO_SQLITE"
+    level: MUST
+    summary: A sqlite DSN selects the sqlite driver.
+    request: { method: GET, target: "/app/pdo/basic.php?op=driver" }
+    expect: { status: 200, body: "sqlite" }
+
+  - id: php-pdo-errmode-default-exception
+    tier: app
+    source: "php.net PDO Errors and error handling, PDO::ERRMODE_EXCEPTION"
+    level: MUST
+    summary: "As of PHP 8.0.0 a new PDO object uses PDO::ERRMODE_EXCEPTION."
+    request: { method: GET, target: "/app/pdo/basic.php?op=errmode_default" }
+    expect: { status: 200, body: "exception" }
+
+  - id: php-pdo-connect-failure-throws-in-silent-mode
+    tier: app
+    source: "php.net PDO Errors and error handling, note on PDO::__construct()"
+    level: MUST
+    summary: The constructor throws PDOException on a failed connection even with ERRMODE_SILENT.
+    request: { method: GET, target: "/app/pdo/basic.php?op=connect_fail_silent" }
+    expect: { status: 200, body: "PDOException" }
+
+  - id: php-pdo-null-closes-connection
+    tier: app
+    source: "php.net Connections and Connection management"
+    level: MUST
+    summary: Assigning null to the last reference closes the connection; its TEMP table is gone on the next one.
+    request: { method: GET, target: "/app/pdo/basic.php?op=close_null" }
+    expect: { status: 200, body: "0" }
+
+  # ------------------------------------------------------------ binding
+  - id: php-pdo-bind-param-int
+    tier: app
+    source: "php.net Predefined Constants (PDO), PDO::PARAM_INT"
+    level: MUST
+    summary: A value bound with PDO::PARAM_INT reaches SQLite as an integer.
+    request: { method: GET, target: "/app/pdo/basic.php?op=bind_int" }
+    expect: { status: 200, body: "integer" }
+
+  - id: php-pdo-bind-param-str
+    tier: app
+    source: "php.net Predefined Constants (PDO), PDO::PARAM_STR"
+    level: MUST
+    summary: An integer bound with PDO::PARAM_STR reaches SQLite as text.
+    request: { method: GET, target: "/app/pdo/basic.php?op=bind_str" }
+    expect: { status: 200, body: "text" }
+
+  - id: php-pdo-bind-default-type-str
+    tier: app
+    source: "php.net PDOStatement::bindValue, type defaults to PDO::PARAM_STR"
+    level: MUST
+    summary: bindValue() without a type binds as PDO::PARAM_STR.
+    request: { method: GET, target: "/app/pdo/basic.php?op=bind_default" }
+    expect: { status: 200, body: "text" }
+
+  - id: php-pdo-bind-param-null
+    tier: app
+    source: "php.net Predefined Constants (PDO), PDO::PARAM_NULL"
+    level: MUST
+    summary: PDO::PARAM_NULL binds SQL NULL.
+    request: { method: GET, target: "/app/pdo/basic.php?op=bind_null" }
+    expect: { status: 200, body: "null" }
+
+  - id: php-pdo-bind-param-bool
+    tier: app
+    source: "php.net Predefined Constants (PDO), PDO::PARAM_BOOL"
+    level: OBSERVED
+    summary: SQLite has no boolean type; PDO::PARAM_BOOL arrives as an integer.
+    request: { method: GET, target: "/app/pdo/basic.php?op=bind_bool" }
+    expect: { status: 200, body: "integer" }
+
+  - id: php-pdo-bind-param-lob-string
+    tier: app
+    source: "php.net PDO_SQLITE introduction, PDO::PARAM_LOB with strings"
+    level: OBSERVED
+    summary: A string bound as PDO::PARAM_LOB arrives as a blob with its NUL bytes intact.
+    request: { method: GET, target: "/app/pdo/basic.php?op=bind_lob" }
+    expect: { status: 200, body: "blob:3" }
+
+  - id: php-pdo-execute-array-binds-str
+    tier: app
+    source: "php.net PDOStatement::execute, params"
+    level: MUST
+    summary: "Values passed to execute() are treated as PDO::PARAM_STR."
+    request: { method: GET, target: "/app/pdo/basic.php?op=execute_array" }
+    expect: { status: 200, body: "text" }
+
+  - id: php-pdo-named-placeholders
+    tier: app
+    source: "php.net PDOStatement::bindValue, named placeholders"
+    level: MUST
+    summary: Named placeholders bind by name.
+    request: { method: GET, target: "/app/pdo/basic.php?op=named" }
+    expect: { status: 200, body: "c" }
+
+  - id: php-pdo-bind-param-by-reference
+    tier: app
+    source: "php.net PDOStatement::bindParam"
+    level: MUST
+    summary: bindParam() evaluates the variable at execute(), not at bind time.
+    request: { method: GET, target: "/app/pdo/basic.php?op=bind_param_reference" }
+    expect: { status: 200, body: "c" }
+
+  - id: php-pdo-bound-value-not-sql
+    tier: app
+    source: "php.net Prepared statements and stored procedures"
+    level: MUST
+    summary: A bound value with SQL syntax is stored as data; the table survives.
+    request: { method: GET, target: "/app/pdo/basic.php?op=injection" }
+    expect: { status: 200, body: "1:4" }
+
+  - id: php-pdo-sqlite-native-types
+    tier: app
+    source: "php.net Migrating from PHP 8.0.x to PHP 8.1.x, PDO SQLite"
+    level: MUST
+    summary: Integers and floats come back as native PHP types, NULL as null.
+    request: { method: GET, target: "/app/pdo/basic.php?op=native_types" }
+    expect: { status: 200, body: "int,float,string,null" }
+
+  - id: php-pdo-stringify-fetches
+    tier: app
+    source: "php.net Predefined Constants (PDO), PDO::ATTR_STRINGIFY_FETCHES"
+    level: MUST
+    summary: ATTR_STRINGIFY_FETCHES turns values into strings and leaves null unchanged.
+    request: { method: GET, target: "/app/pdo/basic.php?op=stringify" }
+    expect: { status: 200, body: "string,null" }
+
+  # -------------------------------------------------------- fetch modes
+  - id: php-pdo-fetch-assoc
+    tier: app
+    source: "php.net PDOStatement::fetch, PDO::FETCH_ASSOC"
+    level: MUST
+    summary: FETCH_ASSOC indexes by column name only.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_assoc" }
+    expect: { status: 200, body: '{"id":1,"name":"a"}' }
+
+  - id: php-pdo-fetch-num
+    tier: app
+    source: "php.net PDOStatement::fetch, PDO::FETCH_NUM"
+    level: MUST
+    summary: FETCH_NUM indexes by column number from 0.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_num" }
+    expect: { status: 200, body: '[1,"a"]' }
+
+  - id: php-pdo-fetch-both-default
+    tier: app
+    source: "php.net PDOStatement::fetch, PDO::FETCH_BOTH (default)"
+    level: MUST
+    summary: fetch() without a mode returns both name and number keys.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_both_default" }
+    expect: { status: 200, body: "0,1,id,name" }
+
+  - id: php-pdo-fetch-obj
+    tier: app
+    source: "php.net PDOStatement::fetch, PDO::FETCH_OBJ"
+    level: MUST
+    summary: FETCH_OBJ returns a stdClass with column-named properties.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_obj" }
+    expect: { status: 200, body: "stdClass:a" }
+
+  - id: php-pdo-fetch-class-before-constructor
+    tier: app
+    source: "php.net PDOStatement::fetch, PDO::FETCH_CLASS"
+    level: MUST
+    summary: FETCH_CLASS maps columns to properties before the constructor runs.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_class" }
+    expect: { status: 200, body: "Row:pre:a" }
+
+  - id: php-pdo-fetch-named
+    tier: app
+    source: "php.net PDOStatement::fetch, PDO::FETCH_NAMED"
+    level: MUST
+    summary: FETCH_NAMED collects duplicate column names into an array.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_named" }
+    expect: { status: 200, body: '{"x":[1,2]}' }
+
+  - id: php-pdo-fetch-column
+    tier: app
+    source: "php.net PDO Fetch Modes, PDO::FETCH_COLUMN"
+    level: MUST
+    summary: fetchAll(FETCH_COLUMN, 1) returns the second column of every row.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_column" }
+    expect: { status: 200, body: "a,b,c" }
+
+  - id: php-pdo-fetch-column-missing-valueerror
+    tier: app
+    source: "php.net PDO Fetch Modes, PDO::FETCH_COLUMN"
+    level: MUST
+    summary: FETCH_COLUMN with a column that does not exist throws ValueError.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_column_missing" }
+    expect: { status: 200, body: "ValueError" }
+
+  - id: php-pdo-fetch-key-pair
+    tier: app
+    source: "php.net PDO Fetch Modes, PDO::FETCH_KEY_PAIR"
+    level: MUST
+    summary: FETCH_KEY_PAIR indexes the second column by the first.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_key_pair" }
+    expect: { status: 200, body: '{"1":"a","2":"b","3":"c"}' }
+
+  - id: php-pdo-fetch-group
+    tier: app
+    source: "php.net PDO Fetch Modes, PDO::FETCH_GROUP"
+    level: MUST
+    summary: FETCH_GROUP indexes lists of rows by a non-unique first column.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_group" }
+    expect: { status: 200, body: '{"x":["a","c"],"y":["b"]}' }
+
+  - id: php-pdo-fetch-unique
+    tier: app
+    source: "php.net PDO Fetch Modes, PDO::FETCH_UNIQUE"
+    level: MUST
+    summary: FETCH_UNIQUE indexes one record per first-column value.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_unique" }
+    expect: { status: 200, body: '{"1":{"name":"a"},"2":{"name":"b"},"3":{"name":"c"}}' }
+
+  - id: php-pdo-fetch-end-false
+    tier: app
+    source: "php.net PDOStatement::fetch, return values"
+    level: MUST
+    summary: fetch() returns false when there are no more rows.
+    request: { method: GET, target: "/app/pdo/basic.php?op=fetch_end" }
+    expect: { status: 200, body: "false" }
+
+  # -------------------------------------------------------- error modes
+  - id: php-pdo-errmode-exception-throws
+    tier: app
+    source: "php.net PDO Errors and error handling, PDO::ERRMODE_EXCEPTION"
+    level: MUST
+    summary: A failing query throws PDOException carrying the SQLSTATE.
+    request: { method: GET, target: "/app/pdo/basic.php?op=errmode_exception" }
+    expect: { status: 200, body: "PDOException:HY000" }
+
+  - id: php-pdo-errmode-silent-sets-code
+    tier: app
+    source: "php.net PDO Errors and error handling, PDO::ERRMODE_SILENT"
+    level: MUST
+    summary: In silent mode a failing query returns false and sets errorCode() and errorInfo().
+    request: { method: GET, target: "/app/pdo/basic.php?op=errmode_silent" }
+    expect: { status: 200, body: "false:HY000:msg" }
+
+  - id: php-pdo-errmode-warning-emits-warning
+    tier: app
+    source: "php.net PDO Errors and error handling, PDO::ERRMODE_WARNING"
+    level: MUST
+    summary: In warning mode a failing query emits E_WARNING and returns false.
+    request: { method: GET, target: "/app/pdo/basic.php?op=errmode_warning" }
+    expect: { status: 200, body: "false:E_WARNING" }
+
+  # ------------------------------------------------------- lastInsertId
+  - id: php-pdo-last-insert-id-string
+    tier: app
+    source: "php.net PDO::lastInsertId, return values"
+    level: MUST
+    summary: lastInsertId() returns the row ID of the last insert as a string.
+    request: { method: GET, target: "/app/pdo/basic.php?op=last_insert_id" }
+    expect: { status: 200, body: "string:2" }
+
+  - id: php-pdo-last-insert-id-explicit
+    tier: app
+    source: "php.net PDO::lastInsertId, return values"
+    level: MUST
+    summary: An explicit rowid is the ID of the last inserted row.
+    request: { method: GET, target: "/app/pdo/basic.php?op=last_insert_id_explicit" }
+    expect: { status: 200, body: "100" }
+
+  # ------------------------------------------- transactions, in-request
+  - id: php-pdo-tx-commit
+    tier: app
+    source: "php.net PDO::commit; PDO::inTransaction"
+    level: MUST
+    summary: commit() keeps the row and returns the connection to autocommit.
+    request: { method: GET, target: "/app/pdo/basic.php?op=tx_commit" }
+    expect: { status: 200, body: "true:false:1" }
+
+  - id: php-pdo-tx-rollback
+    tier: app
+    source: "php.net PDO::rollBack"
+    level: MUST
+    summary: rollBack() discards the row and returns the connection to autocommit.
+    request: { method: GET, target: "/app/pdo/basic.php?op=tx_rollback" }
+    expect: { status: 200, body: "false:0" }
+
+  - id: php-pdo-tx-nested-begin-throws
+    tier: app
+    source: "php.net PDO::beginTransaction, errors/exceptions"
+    level: MUST
+    summary: beginTransaction() inside an active transaction throws PDOException.
+    request: { method: GET, target: "/app/pdo/basic.php?op=tx_nested" }
+    expect: { status: 200, body: "PDOException" }
+
+  - id: php-pdo-tx-nested-begin-throws-silent
+    tier: app
+    source: "php.net PDO::beginTransaction, errors/exceptions, note"
+    level: MUST
+    summary: The nested beginTransaction() throws even with ERRMODE_SILENT.
+    request: { method: GET, target: "/app/pdo/basic.php?op=tx_nested_silent" }
+    expect: { status: 200, body: "PDOException" }
+
+  - id: php-pdo-commit-without-tx-throws
+    tier: app
+    source: "php.net PDO::commit, errors/exceptions"
+    level: MUST
+    summary: commit() without an active transaction throws PDOException.
+    request: { method: GET, target: "/app/pdo/basic.php?op=commit_without_tx" }
+    expect: { status: 200, body: "PDOException" }
+
+  - id: php-pdo-savepoint-rollback-to
+    tier: app
+    source: "sqlite.org SAVEPOINT (lang_savepoint.html)"
+    level: MUST
+    summary: ROLLBACK TO a savepoint through exec() undoes only the work after it.
+    request: { method: GET, target: "/app/pdo/basic.php?op=savepoint_rollback_to" }
+    expect: { status: 200, body: "s1,s3" }
+
+  - id: php-pdo-savepoint-release-keeps-outer-tx
+    tier: app
+    source: "sqlite.org SAVEPOINT (lang_savepoint.html), RELEASE"
+    level: MUST
+    summary: RELEASE inside a PDO transaction keeps the outer transaction, which can still roll back.
+    request: { method: GET, target: "/app/pdo/basic.php?op=savepoint_release" }
+    expect: { status: 200, body: "true:0" }
+
+  # ------------------------------------------------ persistent attribute
+  - id: php-pdo-persistent-attribute-true
+    tier: app
+    source: "php.net Connections and Connection management, PDO::ATTR_PERSISTENT"
+    level: MUST
+    summary: A connection opened with ATTR_PERSISTENT reports it.
+    request: { method: GET, target: "/app/pdo/persist.php?op=is_persistent&mode=persistent" }
+    expect: { status: 200, body: "true" }
+
+  - id: php-pdo-persistent-attribute-false
+    tier: app
+    source: "php.net Connections and Connection management, PDO::ATTR_PERSISTENT"
+    level: MUST
+    summary: A connection opened without ATTR_PERSISTENT is not persistent.
+    request: { method: GET, target: "/app/pdo/persist.php?op=is_persistent&mode=fresh" }
+    expect: { status: 200, body: "false" }
+
+  # ------------------------------------------------ large result sets
+  - id: php-pdo-stream-rows
+    tier: app
+    source: "php.net PDOStatement::fetch"
+    level: MUST
+    summary: 20000 rows fetched one by one and flushed in batches arrive complete.
+    request: { method: GET, target: "/app/pdo/stream.php?rows=20000" }
+    expect: { status: 200, body_contains: "rows=20000 bytes=1408890 peak_under_16m=1" }
+
+  - id: php-pdo-stream-rows-over-spool
+    tier: app
+    source: "php.net PDOStatement::fetch; php.net memory_limit"
+    level: MUST
+    summary: A 14 MB result streamed row by row stays far below memory_limit and arrives complete.
+    request: { method: GET, target: "/app/pdo/stream.php?rows=200000" }
+    expect: { status: 200, body_contains: "rows=200000 bytes=14288890 peak_under_16m=1" }
+
+  - id: php-pdo-fetch-all-over-memory-limit
+    tier: app
+    source: "php.net memory_limit; php.net PDOStatement::fetchAll; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: fetchAll() of the same 200000 rows exceeds the 64M memory_limit; the fatal error answers 500.
+    request: { method: GET, target: "/app/pdo/stream.php?rows=200000&mode=all" }
+    expect: { status: 500 }
+
+  # ------------------------------------------------ uncaught PDOException
+  - id: php-pdo-uncaught-not-displayed
+    tier: app
+    source: "php.net Connections and Connection management (uncaught PDOException becomes a fatal error); php.net Runtime Configuration (errors), display_errors Off"
+    level: MUST
+    summary: With display_errors off, the fatal error of an uncaught PDOException stays out of the body.
+    request: { method: GET, target: "/app/pdo/uncaught.php?op=query" }
+    expect: { body: "before" }
+
+  - id: php-pdo-uncaught-status-500
+    tier: app
+    source: "php-src main/main.c php_error_cb (500 when display_errors is off and headers are not sent)"
+    level: OBSERVED
+    summary: An uncaught PDOException answers 500 with display_errors off.
+    request: { method: GET, target: "/app/pdo/uncaught.php?op=query" }
+    expect: { status: 500 }
+
+  - id: php-pdo-uncaught-connect-dsn-not-displayed
+    tier: app
+    source: "php.net Connections and Connection management, warning (the backtrace can leak connection details; set display_errors to 0)"
+    level: MUST
+    summary: With display_errors off, the backtrace of an uncaught connect failure, and its DSN, stay out of the body.
+    request: { method: GET, target: "/app/pdo/uncaught.php?op=connect" }
+    expect: { body: "before" }
+
+  - id: php-pdo-exception-handler-500
+    tier: app
+    source: "php.net Connections and Connection management; php.net set_exception_handler"
+    level: MUST
+    summary: A PDOException left to set_exception_handler() reaches the handler, which can answer 500; execution stops.
+    request: { method: GET, target: "/app/pdo/uncaught.php?op=handler" }
+    expect: { status: 500, body: "handled:PDOException" }
+
+  # ========================================================== lifecycle
+  # ----------------------------------------------- shutdown functions
+  - id: php-life-shutdown-order
+    tier: app
+    source: "php.net register_shutdown_function"
+    level: MUST
+    summary: Shutdown functions run after the script, in registration order, and their output reaches the body.
+    request: { method: GET, target: "/app/lifecycle/shutdown.php?case=order" }
+    expect: { status: 200, body: "Mab" }
+
+  - id: php-life-shutdown-exit-stops-rest
+    tier: app
+    source: "php.net register_shutdown_function"
+    level: MUST
+    summary: exit() inside a shutdown function stops the remaining shutdown functions.
+    request: { method: GET, target: "/app/lifecycle/shutdown.php?case=exit_in_first" }
+    expect: { status: 200, body: "Ma" }
+
+  - id: php-life-shutdown-nested-appended
+    tier: app
+    source: "php.net register_shutdown_function"
+    level: MUST
+    summary: A shutdown function registered during shutdown runs at the end of the queue.
+    request: { method: GET, target: "/app/lifecycle/shutdown.php?case=nested" }
+    expect: { status: 200, body: "Mabc" }
+
+  - id: php-life-shutdown-after-exit
+    tier: app
+    source: "php.net exit; php.net register_shutdown_function"
+    level: MUST
+    summary: exit('X') prints X, then the shutdown function runs.
+    request: { method: GET, target: "/app/lifecycle/shutdown.php?case=after_exit" }
+    expect: { status: 200, body: "XS" }
+
+  - id: php-life-shutdown-before-destructor
+    tier: app
+    source: "php.net exit, example #3"
+    level: MUST
+    summary: After exit() shutdown functions run, then destructors, as the manual example shows.
+    request: { method: GET, target: "/app/lifecycle/shutdown.php?case=with_destructor" }
+    expect: { status: 200, body: "Shutdown: shutdown()\nDestruct: Foo::__destruct()\n" }
+
+  - id: php-life-shutdown-output-after-fatal
+    tier: app
+    source: "php.net register_shutdown_function, user note on fatal errors"
+    level: OBSERVED
+    summary: A shutdown function runs after a fatal error and can still write to the body.
+    request: { method: GET, target: "/app/lifecycle/shutdown.php?case=fatal&k=life-shutdown-output" }
+    expect: { body: "beforeSHUTDOWN-ECHO" }
+
+  # --------------------------------------------------------- destructors
+  - id: php-life-destruct-on-last-reference
+    tier: app
+    source: "php.net Constructors and Destructors"
+    level: MUST
+    summary: The destructor runs as soon as no reference is left.
+    request: { method: GET, target: "/app/lifecycle/destruct.php?case=unset" }
+    expect: { status: 200, body: "ADB" }
+
+  - id: php-life-destruct-at-end
+    tier: app
+    source: "php.net Constructors and Destructors"
+    level: MUST
+    summary: A live object is destructed during the shutdown sequence, and its output reaches the body.
+    request: { method: GET, target: "/app/lifecycle/destruct.php?case=end" }
+    expect: { status: 200, body: "MD" }
+
+  - id: php-life-destruct-after-exit
+    tier: app
+    source: "php.net Constructors and Destructors; php.net exit"
+    level: MUST
+    summary: The destructor runs even when the script stops with exit().
+    request: { method: GET, target: "/app/lifecycle/destruct.php?case=exit" }
+    expect: { status: 200, body: "XD" }
+
+  - id: php-life-destruct-headers-already-sent
+    tier: app
+    source: "php.net Constructors and Destructors, note: destructors called during script shutdown have HTTP headers already sent"
+    level: MUST
+    summary: A header() call in a destructor at shutdown does not reach the client.
+    waived: "PHP 8.3 with output_buffering runs destructors before it flushes, so header() in a destructor still reaches the client, unlike the php.net destructor page; the case tests PHP, not the gateway."
+    request: { method: GET, target: "/app/lifecycle/destruct.php?case=header" }
+    expect: { status: 200, body: "MD", headers_absent: [X-From-Destructor] }
+
+  - id: php-life-destruct-throw-fatal
+    tier: app
+    source: "php.net Constructors and Destructors, note on exceptions in destructors; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: An exception thrown from a destructor at script termination is a fatal error, which answers 500.
+    request: { method: GET, target: "/app/lifecycle/destruct.php?case=throw" }
+    expect: { status: 500, body: "MD" }
+
+  # ----------------------------------------------------------- exit/die
+  - id: php-life-exit-string
+    tier: app
+    source: "php.net exit, status parameter"
+    level: MUST
+    summary: exit() with a string prints it and ends the script.
+    request: { method: GET, target: "/app/lifecycle/exit.php?case=string" }
+    expect: { status: 200, body: "bye" }
+
+  - id: php-life-die-string
+    tier: app
+    source: "php.net die (equivalent to exit)"
+    level: MUST
+    summary: die() with a string behaves like exit().
+    request: { method: GET, target: "/app/lifecycle/exit.php?case=die" }
+    expect: { status: 200, body: "bye" }
+
+  - id: php-life-exit-int-not-printed
+    tier: app
+    source: "php.net exit, status parameter"
+    level: MUST
+    summary: exit() with an int prints nothing; the HTTP status stays 200.
+    request: { method: GET, target: "/app/lifecycle/exit.php?case=int" }
+    expect: { status: 200, body: "" }
+
+  - id: php-life-exit-int-keeps-output
+    tier: app
+    source: "php.net exit, status parameter"
+    level: MUST
+    summary: Output written before exit(3) reaches the client.
+    request: { method: GET, target: "/app/lifecycle/exit.php?case=int_after_echo" }
+    expect: { status: 200, body: "a" }
+
+  - id: php-life-exit-skips-finally
+    tier: app
+    source: "php.net exit"
+    level: MUST
+    summary: finally blocks are never executed after exit().
+    request: { method: GET, target: "/app/lifecycle/exit.php?case=finally" }
+    expect: { status: 200, body: "T" }
+
+  - id: php-life-exit-keeps-headers
+    tier: app
+    source: "php.net exit; php.net header"
+    level: MUST
+    summary: A header set before exit() reaches the client.
+    request: { method: GET, target: "/app/lifecycle/exit.php?case=header" }
+    expect: { status: 200, body: "x", headers: { X-Before-Exit: "yes" } }
+
+  # ------------------------------------------------ time limit
+  - id: php-life-max-execution-time-ini
+    tier: app
+    source: "php.net ini_get; php.net Runtime Configuration, max_execution_time"
+    level: MUST
+    summary: The fixture's max_execution_time is 5.
+    request: { method: GET, target: "/app/lifecycle/timelimit.php?case=ini" }
+    expect: { status: 200, body: "5" }
+
+  - id: php-life-time-limit-fatal-status
+    tier: app
+    source: "php.net set_time_limit (the script returns a fatal error); php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: Exceeding set_time_limit(1) is a fatal error; the output so far stays and the status is 500.
+    request: { method: GET, target: "/app/lifecycle/timelimit.php?case=cpu&k=life-time-message" }
+    expect: { status: 500, body: "start", duration_max_ms: 3000 }
+
+  - id: php-life-time-limit-sleep-not-counted
+    tier: app
+    source: "php.net set_time_limit, notes (time outside the script is not counted on non-Windows)"
+    level: MUST
+    summary: Two seconds of sleep do not count against set_time_limit(1).
+    request: { method: GET, target: "/app/lifecycle/timelimit.php?case=sleep" }
+    expect: { status: 200, body: "survived" }
+
+  - id: php-life-time-limit-restarts-counter
+    tier: app
+    source: "php.net set_time_limit, description"
+    level: MUST
+    summary: A second set_time_limit(1) restarts the counter, so 1.4 s of CPU in two halves survives.
+    request: { method: GET, target: "/app/lifecycle/timelimit.php?case=restart" }
+    expect: { status: 200, body: "survived" }
+
+  - id: php-life-time-limit-zero
+    tier: app
+    source: "php.net set_time_limit, seconds parameter"
+    level: MUST
+    summary: set_time_limit(0) imposes no limit.
+    request: { method: GET, target: "/app/lifecycle/timelimit.php?case=zero" }
+    expect: { status: 200, body: "survived" }
+
+  # ------------------------------------------------------- memory limit
+  - id: php-life-memory-limit-ini
+    tier: app
+    source: "php.net ini_get; php.net Description of core php.ini directives, memory_limit"
+    level: MUST
+    summary: The fixture's memory_limit is 64M.
+    request: { method: GET, target: "/app/lifecycle/memory.php?case=ini" }
+    expect: { status: 200, body: "64M" }
+
+  - id: php-life-memory-under-limit
+    tier: app
+    source: "php.net Description of core php.ini directives, memory_limit"
+    level: MUST
+    summary: A 40 MiB allocation fits in 64M.
+    request: { method: GET, target: "/app/lifecycle/memory.php?case=under" }
+    expect: { status: 200, body: "41943040" }
+
+  - id: php-life-memory-exhausted-fatal
+    tier: app
+    source: "php.net Description of core php.ini directives, memory_limit; php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: An allocation over memory_limit is a fatal error, which answers 500.
+    request: { method: GET, target: "/app/lifecycle/memory.php?case=exhaust&k=life-memory-message" }
+    expect: { status: 500 }
+
+  - id: php-life-memory-limit-runtime-lower
+    tier: app
+    source: "php.net Description of core php.ini directives, memory_limit (INI_ALL); php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: ini_set() lowers memory_limit to 32M at runtime, so the 40 MiB that fit under 64M now end in a fatal 500.
+    request: { method: GET, target: "/app/lifecycle/memory.php?case=lower" }
+    expect: { status: 500 }
+
+  # ------------------------------------------------------ error output
+  - id: php-life-error-log-not-in-body
+    tier: app
+    source: "php.net error_log (message_type 0); php.net error_log ini (unset: SAPI error logger)"
+    level: MUST
+    summary: error_log() with the error_log ini unset goes to the SAPI logger, not the body, and returns true.
+    request: { method: GET, target: "/app/lifecycle/errors.php?case=error_log" }
+    expect: { status: 200, body: "ok:true" }
+
+  - id: php-life-error-log-sapi-not-in-body
+    tier: app
+    source: "php.net error_log (message_type 4)"
+    level: MUST
+    summary: error_log() with message_type 4 goes to the SAPI logging handler, not the body.
+    request: { method: GET, target: "/app/lifecycle/errors.php?case=error_log_sapi" }
+    expect: { status: 200, body: "ok:true" }
+
+  - id: php-life-display-errors-ini
+    tier: app
+    source: "php.net ini_get (a boolean off reads as empty or \"0\"); php.net FPM configuration, php_admin_flag"
+    level: MUST
+    summary: The pool turns display_errors off.
+    request: { method: GET, target: "/app/lifecycle/errors.php?case=display_ini" }
+    expect: { status: 200, body: "off" }
+
+  - id: php-life-display-errors-admin-not-overridable
+    tier: app
+    source: "php.net FPM configuration, php_admin_value cannot be overridden with ini_set()"
+    level: MUST
+    summary: ini_set('display_errors', '1') fails on a php_admin_flag and the value stays off.
+    request: { method: GET, target: "/app/lifecycle/errors.php?case=display_set" }
+    expect: { status: 200, body: "false:off" }
+
+  - id: php-life-display-errors-off-hides-warning
+    tier: app
+    source: "php.net Runtime Configuration (errors), display_errors Off (do not display any errors)"
+    level: MUST
+    summary: With display_errors off a warning is not written into the body.
+    request: { method: GET, target: "/app/lifecycle/errors.php?case=warning" }
+    expect: { status: 200, body: "ok" }
+
+  - id: php-life-error-reporting-off-hides-warning
+    tier: app
+    source: "php.net error_reporting (0 turns off error reporting)"
+    level: MUST
+    summary: With error_reporting(0) the warning is neither displayed nor in the body.
+    request: { method: GET, target: "/app/lifecycle/errors.php?case=reporting_off" }
+    expect: { status: 200, body: "ok" }
+
+  - id: php-life-uncaught-exception-not-displayed
+    tier: app
+    source: "php.net Connections and Connection management (uncaught exception becomes a fatal error); php.net Runtime Configuration (errors), display_errors Off"
+    level: MUST
+    summary: With display_errors off the fatal error of an uncaught exception stays out of the body; earlier output stays.
+    request: { method: GET, target: "/app/lifecycle/errors.php?case=uncaught" }
+    expect: { body: "before" }
+
+  - id: php-life-uncaught-exception-status-500
+    tier: app
+    source: "php-src main/main.c php_error_cb (500 when display_errors is off and the status is 200)"
+    level: OBSERVED
+    summary: An uncaught exception answers 500 with display_errors off.
+    request: { method: GET, target: "/app/lifecycle/errors.php?case=uncaught" }
+    expect: { status: 500 }
+
+  - id: php-life-exception-handler-status
+    tier: app
+    source: "php.net set_exception_handler"
+    level: MUST
+    summary: An exception handler runs for an uncaught exception, sets 500, and execution stops after it.
+    request: { method: GET, target: "/app/lifecycle/errors.php?case=handler" }
+    expect: { status: 500, body: "before;handled:boom" }
+
+scenarios:
+  # ================================================================ PDO
+  - id: php-pdo-tx-commit-visible
+    tier: app
+    source: "php.net PDO::commit"
+    level: MUST
+    summary: A committed row is visible to the next request.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=pdo-commit" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/pdo/tx.php?op=commit&k=pdo-commit" }
+        expect: { status: 200, body: "committed" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&k=pdo-commit" }
+        expect: { status: 200, body: "1" }
+
+  - id: php-pdo-tx-open-at-end-rolled-back
+    tier: app
+    source: "php.net Transactions and auto-commit"
+    level: MUST
+    summary: A transaction from beginTransaction() still open at script end is rolled back; the next request sees nothing.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=pdo-open" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/pdo/tx.php?op=open&k=pdo-open" }
+        expect: { status: 200, body: "left open" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&k=pdo-open" }
+        expect: { status: 200, body: "0" }
+
+  - id: php-pdo-tx-manual-begin-closed-connection
+    tier: app
+    source: "php.net Transactions and auto-commit (PDO cannot roll back a manual BEGIN); sqlite.org sqlite3_close (an open transaction is rolled back)"
+    level: MUST
+    summary: A manual BEGIN left open is rolled back by SQLite when the non-persistent connection closes at script end.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=pdo-manual" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/pdo/tx.php?op=manual_open&k=pdo-manual" }
+        expect: { status: 200, body: "left open" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&k=pdo-manual" }
+        expect: { status: 200, body: "0" }
+
+  - id: php-pdo-tx-uncaught-exception-rolls-back
+    tier: app
+    source: "php.net PDO Errors and error handling, PDO::ERRMODE_EXCEPTION (transactions are rolled back if the exception terminates the script)"
+    level: MUST
+    summary: An uncaught PDOException inside a transaction ends the script and the insert is rolled back.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=pdo-uncaught" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/pdo/tx.php?op=uncaught&k=pdo-uncaught" }
+        expect: { body_contains: "before" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&k=pdo-uncaught" }
+        expect: { status: 200, body: "0" }
+
+  - id: php-pdo-tx-exit-rolls-back
+    tier: app
+    source: "php.net Transactions and auto-commit"
+    level: MUST
+    summary: exit() inside a transaction ends the script and PDO rolls the transaction back.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=pdo-exit" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/pdo/tx.php?op=exit&k=pdo-exit" }
+        expect: { status: 200, body: "exited" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&k=pdo-exit" }
+        expect: { status: 200, body: "0" }
+
+  - id: php-pdo-persistent-connection-reused
+    tier: app
+    source: "php.net Connections and Connection management; php.net Persistent Database Connections (FPM/FastCGI: reused by the same worker)"
+    level: MUST
+    summary: Over six requests to four children, a child reuses its persistent connection, so its TEMP table survives.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=pdo-persist" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=persistent&k=pdo-persist" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=persistent&k=pdo-persist" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=persistent&k=pdo-persist" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=persistent&k=pdo-persist" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=persistent&k=pdo-persist" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=persistent&k=pdo-persist" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=verify&k=pdo-persist" }
+        expect: { status: 200, body: "reused" }
+
+  - id: php-pdo-nonpersistent-connection-fresh
+    tier: app
+    source: "php.net Connections and Connection management (closed when the script ends)"
+    level: MUST
+    summary: Without ATTR_PERSISTENT every request gets a fresh connection with an empty TEMP schema.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=pdo-fresh" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=fresh&k=pdo-fresh" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=fresh&k=pdo-fresh" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=fresh&k=pdo-fresh" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=fresh&k=pdo-fresh" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=fresh&k=pdo-fresh" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=fresh&k=pdo-fresh" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=verify&k=pdo-fresh" }
+        expect: { status: 200, body: "fresh" }
+
+  - id: php-pdo-persistent-set-late-not-persistent
+    tier: app
+    source: "php.net Connections and Connection management (ATTR_PERSISTENT via setAttribute() after instantiation is not used)"
+    level: MUST
+    summary: ATTR_PERSISTENT set with setAttribute() after construction leaves the connection non-persistent.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=pdo-late" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=late&k=pdo-late" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=late&k=pdo-late" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=late&k=pdo-late" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=late&k=pdo-late" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=late&k=pdo-late" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=hit&mode=late&k=pdo-late" }
+        expect: { status: 200, body: "hit" }
+      - request: { method: GET, target: "/app/pdo/persist.php?op=verify&k=pdo-late" }
+        expect: { status: 200, body: "fresh" }
+
+  - id: php-pdo-persistent-open-tx-rolled-back
+    tier: app
+    source: "php.net Transactions and auto-commit (an outstanding transaction is rolled back when the script ends)"
+    level: MUST
+    summary: beginTransaction() left open on a persistent connection is rolled back at script end; no row, no leaked lock.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=pdo-persist-tx" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/pdo/persist.php?op=open_txn&k=pdo-persist-tx" }
+        expect: { status: 200, body: "left open" }
+      - request: { method: POST, target: "/app/pdo/persist.php?op=open_txn&k=pdo-persist-tx" }
+        expect: { status: 200, body: "left open" }
+      - request: { method: POST, target: "/app/pdo/persist.php?op=open_txn&k=pdo-persist-tx" }
+        expect: { status: 200, body: "left open" }
+      - request: { method: POST, target: "/app/pdo/persist.php?op=open_txn&k=pdo-persist-tx" }
+        expect: { status: 200, body: "left open" }
+      - request: { method: POST, target: "/app/pdo/persist.php?op=open_txn&k=pdo-persist-tx" }
+        expect: { status: 200, body: "left open" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&db=persist&k=pdo-persist-tx" }
+        expect: { status: 200, body: "0" }
+      - request: { method: POST, target: "/app/pdo/persist.php?op=insert&k=pdo-persist-tx" }
+        expect: { status: 200, body: "inserted", duration_max_ms: 2000 }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&db=persist&k=pdo-persist-tx" }
+        expect: { status: 200, body: "1" }
+
+  - id: php-pdo-locked-without-busy-timeout
+    tier: app
+    source: "sqlite.org Result and Error Codes, SQLITE_BUSY (5); php.net PDO::ATTR_TIMEOUT"
+    level: MUST
+    summary: With ATTR_TIMEOUT 0 a writer fails at once with SQLITE_BUSY while a parallel request holds the write lock.
+    steps:
+      - parallel:
+          - request: { method: POST, target: "/app/pdo/lock.php?op=hold&ms=1500" }
+            expect: { status: 200, body: "held" }
+          - request: { method: POST, target: "/app/pdo/lock.php?op=write&delay_ms=300&timeout=0" }
+            expect: { status: 200, body: "busy:5", duration_max_ms: 1000 }
+
+  - id: php-pdo-busy-timeout-waits
+    tier: app
+    source: "php.net PDO::ATTR_TIMEOUT (timeout in seconds); sqlite.org sqlite3_busy_timeout"
+    level: OBSERVED
+    summary: With ATTR_TIMEOUT 5 a writer waits for the parallel lock holder to commit, then succeeds.
+    steps:
+      - parallel:
+          - request: { method: POST, target: "/app/pdo/lock.php?op=hold&ms=1500" }
+            expect: { status: 200, body: "held" }
+          - request: { method: POST, target: "/app/pdo/lock.php?op=write&delay_ms=300&timeout=5" }
+            expect: { status: 200, body: "acquired", duration_min_ms: 1100 }
+
+  - id: php-pdo-reader-not-blocked-by-reserved-lock
+    tier: app
+    source: "sqlite.org File Locking And Concurrency in SQLite Version 3 (RESERVED allows new SHARED locks)"
+    level: MUST
+    summary: A reader is not blocked while a parallel request holds BEGIN IMMEDIATE.
+    steps:
+      - parallel:
+          - request: { method: POST, target: "/app/pdo/lock.php?op=hold&ms=1500" }
+            expect: { status: 200, body: "held" }
+          - request: { method: GET, target: "/app/pdo/lock.php?op=read&delay_ms=300" }
+            expect: { status: 200, body: "read:1", duration_max_ms: 1000 }
+
+  # ========================================================== lifecycle
+  - id: php-life-abort-ignored-detected-rolls-back
+    tier: app
+    source: "php.net Connection handling; php.net connection_aborted; php.net ignore_user_abort"
+    level: MUST
+    summary: After the gateway times out, a script that ignores aborts sees connection_aborted() on its next flush and rolls back.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-abort-ignore" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/lifecycle/abort.php?mode=ignore&k=life-abort-ignore" }
+        route: { timeout_ms: 300 }
+        expect: { status: 504, reaches_responder: false, duration_max_ms: 1200 }
+      - wait_ms: 6000
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&k=life-abort-ignore" }
+        expect: { status: 200, body: "0" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-abort-ignore" }
+        expect: { status: 200, body: "aborted" }
+
+  - id: php-life-abort-default-terminates
+    tier: app
+    source: "php.net Connection handling (by default the script terminates on disconnect; shutdown functions run); php.net Transactions and auto-commit"
+    level: MUST
+    summary: Without ignore_user_abort the script ends at the failed flush, the shutdown function sees the abort, and the transaction rolls back.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-abort-default" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/lifecycle/abort.php?mode=default&k=life-abort-default" }
+        route: { timeout_ms: 300 }
+        expect: { status: 504, reaches_responder: false, duration_max_ms: 1200 }
+      - wait_ms: 6000
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&k=life-abort-default" }
+        expect: { status: 200, body: "0" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-abort-default" }
+        expect: { status: 200, body: "shutdown aborted=1" }
+
+  - id: php-life-abort-undetected-without-output
+    tier: app
+    source: "php.net ignore_user_abort, note (an abort is not detected until output is sent)"
+    level: MUST
+    summary: A script that writes nothing after the gateway timed out never sees the abort and commits.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-abort-quiet" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/lifecycle/abort.php?mode=quiet&sleep_ms=1500&k=life-abort-quiet" }
+        route: { timeout_ms: 300 }
+        expect: { status: 504, reaches_responder: false, duration_max_ms: 1200 }
+      - wait_ms: 2500
+      - request: { method: GET, target: "/app/pdo/obs.php?op=count&k=life-abort-quiet" }
+        expect: { status: 200, body: "1" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-abort-quiet" }
+        expect: { status: 200, body: "committed aborted=0" }
+
+  - id: php-life-finish-request-response-first
+    tier: app
+    source: "php.net fastcgi_finish_request"
+    level: MUST
+    summary: The response arrives at fastcgi_finish_request(), and the work after it still happens.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-finish" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/lifecycle/finish.php?after_ms=1500&k=life-finish" }
+        expect: { status: 200, body: "done", duration_max_ms: 1000 }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-finish" }
+        expect: { status: 200, body: "" }
+      - wait_ms: 2000
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-finish" }
+        expect: { status: 200, body: "after first=true" }
+
+  - id: php-life-finish-request-late-output-dropped
+    tier: app
+    source: "php.net fastcgi_finish_request"
+    level: MUST
+    summary: Output after fastcgi_finish_request() never reaches the client; with ignore_user_abort the script continues.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-finish-late" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/lifecycle/finish.php?echo_after=1&ignore=1&after_ms=200&k=life-finish-late" }
+        expect: { status: 200, body: "done" }
+      - wait_ms: 1000
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-finish-late" }
+        expect: { status: 200, body: "after first=true" }
+
+  - id: php-life-finish-request-late-output-terminates
+    tier: app
+    source: "php.net fastcgi_finish_request, user note (output after it ends the script unless ignore_user_abort)"
+    level: OBSERVED
+    summary: Without ignore_user_abort, flushed output after fastcgi_finish_request() ends the script silently.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-finish-term" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/lifecycle/finish.php?echo_after=1&after_ms=200&k=life-finish-term" }
+        expect: { status: 200, body: "done" }
+      - wait_ms: 1000
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-finish-term" }
+        expect: { status: 200, body: "" }
+
+  - id: php-life-finish-request-second-call-false
+    tier: app
+    source: "php.net fastcgi_finish_request, return values"
+    level: OBSERVED
+    summary: A second fastcgi_finish_request() on a finished request returns false.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-finish-twice" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: POST, target: "/app/lifecycle/finish.php?second=1&k=life-finish-twice" }
+        expect: { status: 200, body: "done" }
+      - wait_ms: 500
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-finish-twice" }
+        expect: { status: 200, body: "after first=true second=false" }
+
+  - id: php-life-finish-request-holds-worker
+    tier: app
+    source: "php.net fastcgi_finish_request, user note (the script still occupies an FPM process)"
+    level: OBSERVED
+    summary: Four finished-but-running scripts free the gateway slots yet hold all four children, so the next call waits.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-finish-hold" }
+        expect: { status: 200, body: "reset" }
+      - parallel:
+          - request: { method: POST, target: "/app/lifecycle/finish.php?after_ms=2500&k=life-finish-hold" }
+            expect: { status: 200, body: "done", duration_max_ms: 1000 }
+          - request: { method: POST, target: "/app/lifecycle/finish.php?after_ms=2500&k=life-finish-hold" }
+            expect: { status: 200, body: "done", duration_max_ms: 1000 }
+          - request: { method: POST, target: "/app/lifecycle/finish.php?after_ms=2500&k=life-finish-hold" }
+            expect: { status: 200, body: "done", duration_max_ms: 1000 }
+          - request: { method: POST, target: "/app/lifecycle/finish.php?after_ms=2500&k=life-finish-hold" }
+            expect: { status: 200, body: "done", duration_max_ms: 1000 }
+      - request: { method: GET, target: "/app/lifecycle/exit.php?case=string" }
+        expect: { status: 200, body: "bye", duration_min_ms: 1000 }
+      - wait_ms: 1000
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-finish-hold" }
+        expect: { status: 200, body: "after first=true,after first=true,after first=true,after first=true" }
+
+  - id: php-life-shutdown-runs-after-fatal
+    tier: app
+    source: "php.net register_shutdown_function, user notes on fatal errors and error_get_last()"
+    level: OBSERVED
+    summary: A shutdown function runs after a fatal error and error_get_last() reports E_ERROR.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-shutdown-fatal" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/lifecycle/shutdown.php?case=fatal&k=life-shutdown-fatal" }
+        expect: { body_contains: "before" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-shutdown-fatal" }
+        expect: { status: 200, body: "shutdown status=0 last=1" }
+
+  - id: php-life-shutdown-runs-after-uncaught-exception
+    tier: app
+    source: "php.net register_shutdown_function (runs after script execution finishes)"
+    level: OBSERVED
+    summary: A shutdown function runs after an uncaught exception, which error_get_last() reports as E_ERROR.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-shutdown-exc" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/lifecycle/shutdown.php?case=exception&k=life-shutdown-exc" }
+        expect: { body_contains: "before" }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-shutdown-exc" }
+        expect: { status: 200, body: "shutdown status=0 last=1" }
+
+  - id: php-life-time-limit-shutdown-sees-timeout
+    tier: app
+    source: "php.net Connection handling (on timeout the shutdown function runs and connection_status() is 2)"
+    level: MUST
+    summary: After set_time_limit(1) is exceeded the shutdown function runs with CONNECTION_TIMEOUT.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-time-cpu" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/lifecycle/timelimit.php?case=cpu&k=life-time-cpu" }
+        expect: { body_contains: "start", duration_max_ms: 3000 }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-time-cpu" }
+        expect: { status: 200, body: "shutdown status=2" }
+
+  - id: php-life-max-execution-time-default
+    tier: app
+    source: "php.net Runtime Configuration, max_execution_time; php.net Connection handling"
+    level: MUST
+    summary: Without set_time_limit the ini max_execution_time of 5 s ends a CPU-bound script, and the shutdown function sees the timeout.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-time-default" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/lifecycle/timelimit.php?case=default&k=life-time-default" }
+        route: { timeout_ms: 9000 }
+        expect: { body_contains: "start", duration_min_ms: 4500, duration_max_ms: 8000 }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-time-default" }
+        expect: { status: 200, body: "shutdown status=2" }
+
+  - id: php-life-memory-exhausted-shutdown-runs
+    tier: app
+    source: "php.net register_shutdown_function (runs after script execution finishes)"
+    level: OBSERVED
+    summary: A shutdown function runs after the memory limit is exhausted.
+    steps:
+      - request: { method: POST, target: "/app/pdo/obs.php?op=reset&k=life-memory" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/lifecycle/memory.php?case=exhaust&k=life-memory" }
+        expect: { status: 500 }
+      - request: { method: GET, target: "/app/pdo/obs.php?op=marks&k=life-memory" }
+        expect: { status: 200, body: "shutdown status=0" }
