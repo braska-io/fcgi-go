@@ -23,16 +23,16 @@ case 'insert':
     $db->exec('BEGIN IMMEDIATE');
     $db->prepare('INSERT INTO kv (k, n) VALUES (?, 1)')->execute([$k]);
     usleep((int) ($q['sleep_ms'] ?? 0) * 1000);
-    // ob_flush() pushes output_buffering's buffer to the SAPI; flush()
-    // alone would write nothing and never notice a closed connection. Two
-    // writes, because the first one after the peer closed can still succeed.
-    echo 'insert';
-    ob_flush();
-    flush();
-    usleep(50000);
-    echo 'ed';
-    ob_flush();
-    flush();
+    // ob_flush() pushes output_buffering's buffer to the SAPI; flush() alone
+    // would write nothing. PHP notices a lost client only when a write fails,
+    // and a proxy between gateway and fpm accepts the first writes after the
+    // client left, so the body goes out in three writes with short gaps.
+    foreach (['ins', 'er', 'ted'] as $part) {
+        echo $part;
+        ob_flush();
+        flush();
+        usleep(50000);
+    }
     if (connection_aborted()) {
         $db->exec('ROLLBACK');
         exit;

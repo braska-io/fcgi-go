@@ -8,6 +8,9 @@ services:
   c:
     restart: always
     build: compliance/fixtures/c
+    # Same restart loop as cpp and rust; with a shell as PID 1 the responder
+    # needs no supervisor of its own.
+    entrypoint: ["sh", "-c", "while true; do /usr/local/bin/responder; done"]
     environment: { FIXTURE_STATE: /state }
     ports: ["127.0.0.1:9002:9000"]
   cpp:
