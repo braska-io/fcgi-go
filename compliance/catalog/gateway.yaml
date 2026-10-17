@@ -211,3 +211,13 @@ cases:
     request: { method: GET, target: "/big?bytes=268435456" }
     route: { max_response_bytes: 65536 }
     expect: { status: 502, reaches_responder: false, duration_max_ms: 3000 }
+  - id: gw-large-download-complete
+    tier: gateway
+    source: "docs/design.md, both directions are buffered"
+    level: MUST
+    summary: A 300 MiB response passes the spool and arrives byte for byte, beyond 256 MiB and through HTTP/2 flow control.
+    request: { method: GET, target: "/big?bytes=314572800" }
+    expect:
+      status: 200
+      headers: { Content-Length: "314572800" }
+      body_sha256: c94f9518a31d14b56d671b997ff6d3c99dc5dd58109f0c409b60f21bd748e6ea
