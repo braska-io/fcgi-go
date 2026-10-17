@@ -39,7 +39,7 @@ type Result struct {
 // FCGI_ABORT_REQUEST, so closing the connection is the only way to cancel:
 // it happens as soon as ctx ends. Stdout and stderr stream into the writers.
 func Do(ctx context.Context, conn net.Conn, params []Param, stdin io.Reader, stdout, stderr io.Writer) (Result, error) {
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	stop := context.AfterFunc(ctx, func() { abort(conn) })
 	defer func() {
 		stop()
 		_ = conn.Close()
@@ -55,6 +55,16 @@ func Do(ctx context.Context, conn net.Conn, params []Param, stdin io.Reader, std
 		return res, err
 	}
 	return res, nil
+}
+
+// abort closes conn so that the responder's next write fails. A plain close
+// sends a FIN, and the first write after a FIN still succeeds; a reset makes
+// it fail at once, which is what lets a responder roll back its work.
+func abort(conn net.Conn) {
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.SetLinger(0)
+	}
+	_ = conn.Close()
 }
 
 func roundTrip(conn net.Conn, params []Param, stdin io.Reader, stdout, stderr io.Writer) (Result, error) {
