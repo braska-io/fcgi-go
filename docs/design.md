@@ -50,7 +50,7 @@ Options come in two kinds. An `Option` works on `New` and on `Script`. On `Scrip
 | `WithDocumentRoot(dir)` | gateway | `""` | `DOCUMENT_ROOT`, and the base of `SCRIPT_FILENAME` |
 | `WithProtectedHeaders(names...)` | gateway | none | client headers that never reach the responder; a trailing `*` matches a prefix |
 | `WithLogger(l)` | gateway | `slog.Default()` | where stderr output and errors go |
-| `WithTimeout(d)` | both | 60 s | deadline of one call, from the first byte read to the last byte written to the spool |
+| `WithTimeout(d)` | both | 60 s | deadline of one call, from the wait for a responder slot to the last byte written to the spool. Reading the request body does not count: a slow upload holds no responder worker |
 | `WithMaxBody(n)` | both | 10 MiB | larger request bodies answer 413 |
 | `WithParam(name, value)` | both | none | a fixed parameter |
 | `WithParams(f)` | both | none | parameters computed per request |
@@ -126,6 +126,7 @@ A failed call never sends part of the responder's output to the client. The libr
 - A `Location` with an absolute URI and no `Status:` gives 302.
 - `FCGI_STDERR` content goes to the logger at warn level, capped at 8 KiB per call. It never reaches the client.
 - A non-zero application status in `FCGI_END_REQUEST` is logged; the response stands.
+- A response without `Content-Length` gets one from the spooled body. For `HEAD` the body is empty by definition, so the gateway adds none.
 - `Range` request headers reach the responder unchanged. The gateway never builds a 206 itself; RFC 9110 section 14.2 allows a server to ignore `Range`.
 
 ## Readiness never runs a script
