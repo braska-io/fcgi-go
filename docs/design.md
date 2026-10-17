@@ -69,6 +69,8 @@ Options come in two kinds. An `Option` works on `New` and on `Script`. On `Scrip
 
 A name set at a later stage replaces the earlier value. An empty string from stages 3 to 5 removes the parameter.
 
+The library sends parameters with one call only. A responder can still keep their effect: php-fpm applies `PHP_VALUE` and `PHP_ADMIN_VALUE` to the worker process, so later calls of any script on that worker see the change, and a `PHP_ADMIN_VALUE` stays locked against `ini_set`. Set such values in the pool configuration, for every script alike, and not with a script's `WithParam`. The cases `php-param-*` show the behaviour.
+
 ## The gateway deviates from RFC 3875 where applications depend on nginx
 
 Each deviation follows what nginx sends, because PHP applications rely on it. The compliance cases for the RFC rule stay in the catalog and are waived with the reason below.
