@@ -1,0 +1,5 @@
+name: rust
+address: tcp:127.0.0.1:9004
+document_root: /srv
+fixtures: [dump, respond, crash, slow, big, stderr, exitcode, txn, fatal, malformed]
+deviations: []

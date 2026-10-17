@@ -1,0 +1,9 @@
+name: cpp
+address: tcp:127.0.0.1:9003
+document_root: /srv
+fixtures: [dump, respond, crash, slow, big, stderr, exitcode, txn, fatal]
+deviations:
+  - fixture: dump
+    note: Non-ASCII characters are emitted as \uXXXX escapes (as PHP's json_encode does); invalid UTF-8 bytes become �, one per byte.
+  - fixture: fatal
+    note: The responder flushes "before" and then lets an uncaught C++ exception reach std::terminate, which aborts the whole process (SIGABRT), not just the request.

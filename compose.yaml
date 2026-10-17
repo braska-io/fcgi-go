@@ -1,0 +1,22 @@
+# Reference FastCGI responders for the compliance suite (compliance/RESPONDERS.md).
+# Crash fixtures kill the responder on purpose; restart brings it back.
+services:
+  php:
+    restart: always
+    build: compliance/fixtures/php
+    ports: ["127.0.0.1:9001:9000"]
+  c:
+    restart: always
+    build: compliance/fixtures/c
+    environment: { FIXTURE_STATE: /state }
+    ports: ["127.0.0.1:9002:9000"]
+  cpp:
+    restart: always
+    build: compliance/fixtures/cpp
+    environment: { FIXTURE_STATE: /state }
+    ports: ["127.0.0.1:9003:9000"]
+  rust:
+    restart: always
+    build: compliance/fixtures/rust
+    environment: { FIXTURE_STATE: /state }
+    ports: ["127.0.0.1:9004:9000"]
