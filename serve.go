@@ -79,7 +79,13 @@ func (g *Gateway) handle(w http.ResponseWriter, r *http.Request, cfg *config) er
 // readBody spools the request body so a slow client never holds a worker.
 func readBody(w http.ResponseWriter, r *http.Request, cfg *config) (*spool.Spool, error) {
 	sp := spool.New(cfg.spoolDir, cfg.spoolMemory)
-	_, err := io.Copy(sp, http.MaxBytesReader(w, r.Body, cfg.maxBody))
+	n, err := io.Copy(sp, http.MaxBytesReader(w, r.Body, cfg.maxBody))
+	if err == nil && r.Header.Get("Content-Length") != "" && r.ContentLength >= 0 && n != r.ContentLength {
+		// net/http enforces this on HTTP/1.1 and HTTP/2; quic-go's HTTP/3
+		// server only catches a body longer than declared. RFC 9114 section
+		// 4.1.2 makes either mismatch malformed, so it must not be forwarded.
+		err = fmt.Errorf("body is %d bytes, Content-Length says %d", n, r.ContentLength)
+	}
 	if err == nil {
 		return sp, nil
 	}
@@ -163,7 +169,11 @@ func (g *Gateway) roundTrip(ctx context.Context, r *http.Request, cfg *config, i
 
 // hasBody tells whether the client sent a message-body, even an empty one.
 func hasBody(r *http.Request, in *spool.Spool) bool {
-	return in.Len() > 0 || r.ContentLength != 0 || len(r.TransferEncoding) > 0 || r.Header.Get("Content-Length") != ""
+	// net/http reports -1 only when the client framed a body. quic-go's
+	// HTTP/3 server reports -1 whenever Content-Length is absent, so there it
+	// says nothing.
+	framed := r.ContentLength > 0 || (r.ContentLength < 0 && r.ProtoMajor < 3)
+	return in.Len() > 0 || framed || len(r.TransferEncoding) > 0 || r.Header.Get("Content-Length") != ""
 }
 
 func classify(ctx context.Context, err error) error {
@@ -210,6 +220,10 @@ func writeResponse(w http.ResponseWriter, r *http.Request, cfg *config, rep *rep
 	}
 	w.WriteHeader(rep.parsed.Status)
 	if r.Method == http.MethodHead || !bodyAllowed(rep.parsed.Status) {
+		// quic-go's HTTP/3 server adds Content-Length: 0 to a response whose
+		// header is still unsent when the handler returns; flushing sends it
+		// as the responder wrote it.
+		_ = http.NewResponseController(w).Flush() // a writer without Flush has nothing to add
 		return nil
 	}
 	if _, err := io.Copy(w, rep.body.Reader(rep.parsed.BodyOffset)); err != nil {

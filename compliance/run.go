@@ -26,7 +26,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// ErrPending marks a run the suite cannot execute yet, such as HTTP/3.
+// ErrPending marks a run the suite cannot execute yet.
 var ErrPending = errors.New("compliance: pending")
 
 // Responder is one reference FastCGI responder, read from
@@ -109,7 +109,7 @@ type Observation struct {
 // Do sends one request over tr to the handler and observes the result.
 func Do(ctx context.Context, tr Transport, req *Request, h http.Handler) (*Observation, error) {
 	if tr == H3 {
-		return nil, ErrPending
+		return doH3Server(ctx, req, h)
 	}
 	srv := httptest.NewUnstartedServer(h)
 	srv.EnableHTTP2 = tr == H2
@@ -131,6 +131,27 @@ func Do(ctx context.Context, tr Transport, req *Request, h http.Handler) (*Obser
 	default:
 		return nil, fmt.Errorf("unknown transport %q", tr)
 	}
+	if err != nil {
+		return nil, err
+	}
+	o.Duration = time.Since(start)
+	o.Port = port
+	o.parseDump()
+	return o, nil
+}
+
+func doH3Server(ctx context.Context, req *Request, h http.Handler) (*Observation, error) {
+	addr, stop, err := serveH3(h)
+	if err != nil {
+		return nil, err
+	}
+	defer stop()
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("server address: %w", err)
+	}
+	start := time.Now()
+	o, err := doH3(ctx, addr, req, req.body())
 	if err != nil {
 		return nil, err
 	}
@@ -440,10 +461,11 @@ func (e *Expect) Check(o *Observation) []string {
 	if reached != want {
 		fail("reaches_responder: want %t, got %t (status %d, body %q)", want, reached, o.Status, clip(o.Body))
 	}
-	if e.Status != 0 && o.Status != e.Status {
+	reset := e.OrReset && o.Status == 0 && o.Header.Get("X-Compliance-Reset") != ""
+	if e.Status != 0 && o.Status != e.Status && !reset {
 		fail("status: want %d, got %d (body %q)", e.Status, o.Status, clip(o.Body))
 	}
-	if len(e.StatusIn) > 0 && !containsInt(e.StatusIn, o.Status) {
+	if len(e.StatusIn) > 0 && !containsInt(e.StatusIn, o.Status) && !reset {
 		fail("status: want one of %v, got %d", e.StatusIn, o.Status)
 	}
 	f = append(f, e.checkEnv(o)...)

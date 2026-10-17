@@ -21,8 +21,7 @@ var catalogFS embed.FS
 // Transport is the HTTP version a case is sent with.
 type Transport string
 
-// The transports the schema knows. H3 runs are pending until the library
-// adds HTTP/3.
+// The transports the schema knows.
 const (
 	H1 Transport = "h1"
 	H2 Transport = "h2"
@@ -98,6 +97,7 @@ type Expect struct {
 	ReachesResponder *bool               `yaml:"reaches_responder"`
 	Status           int                 `yaml:"status"`
 	StatusIn         []int               `yaml:"status_in"`
+	OrReset          bool                `yaml:"or_reset"` // a reset stream also passes: RFC 9113 8.1.1, RFC 9114 4.1.2
 	Env              map[string]string   `yaml:"env"`
 	EnvMatch         map[string]string   `yaml:"env_match"`
 	EnvAbsent        []string            `yaml:"env_absent"`
