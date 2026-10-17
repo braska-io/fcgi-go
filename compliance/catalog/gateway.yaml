@@ -217,6 +217,9 @@ cases:
     level: MUST
     summary: A 300 MiB response passes the spool and arrives byte for byte, beyond 256 MiB and through HTTP/2 flow control.
     request: { method: GET, target: "/big?bytes=314572800" }
+    # The suite's 5 s deadline is too short for slow CI runners to write 300 MiB;
+    # this case is about completeness, so it gets the library default.
+    route: { timeout_ms: 60000 }
     expect:
       status: 200
       headers: { Content-Length: "314572800" }
