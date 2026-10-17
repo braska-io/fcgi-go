@@ -52,6 +52,7 @@ Options come in two kinds. An `Option` works on `New` and on `Script`. On `Scrip
 | `WithLogger(l)` | gateway | `slog.Default()` | where stderr output and errors go |
 | `WithTimeout(d)` | both | 60 s | deadline of one call, from the wait for a responder slot to the last byte written to the spool. Reading the request body does not count: a slow upload holds no responder worker |
 | `WithMaxBody(n)` | both | 10 MiB | larger request bodies answer 413 |
+| `WithMaxResponse(n)` | both | 1 GiB | bytes the responder may write to stdout, header block included; beyond it the call answers 502. It bounds the spool, so one script cannot fill the spool disk |
 | `WithParam(name, value)` | both | none | a fixed parameter |
 | `WithParams(f)` | both | none | parameters computed per request |
 | `WithPathInfo(f)` | script | derived | `PATH_INFO` per request; by default the path after `/<script>`, as RFC 3875 section 3.3 splits the script URI |
@@ -116,6 +117,7 @@ php-fpm ignores `FCGI_ABORT_REQUEST`. Closing the connection is the only cancel,
 | responder closed without `FCGI_END_REQUEST`, or sent broken framing | 502 |
 | responder output without a complete CGI header block | 502 |
 | responder `Content-Length` differs from the body it sent | 502 |
+| responder wrote more than `WithMaxResponse` bytes to stdout | 502 |
 | gateway shutting down | 503 |
 
 A failed call never sends part of the responder's output to the client. The library never retries a call.

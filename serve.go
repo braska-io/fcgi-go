@@ -20,6 +20,7 @@ const maxStderrLog = 8 << 10
 var (
 	errNoSlot   = errors.New("no free responder slot")
 	errBadReply = errors.New("bad responder reply")
+	errTooLarge = errors.New("responder output exceeds the response limit")
 )
 
 // statusError carries the HTTP status a failed call answers with.
@@ -144,7 +145,10 @@ func (g *Gateway) roundTrip(ctx context.Context, r *http.Request, cfg *config, i
 		BodyLength:   in.Len(),
 		HasBody:      hasBody(r, in),
 	})
-	res, err := fastcgi.Do(ctx, conn, params, in.Reader(0), out, stderr)
+	res, err := fastcgi.Do(ctx, conn, params, in.Reader(0), &limitWriter{w: out, left: cfg.maxResponse}, stderr)
+	if errors.Is(err, errTooLarge) {
+		return fail(http.StatusBadGateway, "%w: %d bytes", errTooLarge, cfg.maxResponse)
+	}
 	if err != nil {
 		return classify(ctx, err)
 	}
@@ -220,6 +224,21 @@ func bodyAllowed(status int) bool {
 
 // cappedBuffer keeps the first limit bytes and drops the rest, so a noisy
 // responder cannot grow the log line.
+// limitWriter fails the write that crosses the limit. Do then closes the
+// connection, so the responder stops instead of filling the spool.
+type limitWriter struct {
+	w    io.Writer
+	left int64
+}
+
+func (l *limitWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > l.left {
+		return 0, errTooLarge
+	}
+	l.left -= int64(len(p))
+	return l.w.Write(p)
+}
+
 type cappedBuffer struct {
 	buf   []byte
 	limit int

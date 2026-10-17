@@ -597,6 +597,16 @@ cases:
     request: { method: GET, target: "/app/lifecycle/timelimit.php?case=zero" }
     expect: { status: 200, body: "survived" }
 
+  - id: php-life-time-limit-after-flush-truncates
+    tier: app
+    source: "php.net set_time_limit (the script returns a fatal error); php-src main/main.c php_error_cb"
+    level: OBSERVED
+    summary: >-
+      A time limit hit after headers were flushed cannot change the status: the client gets 200 and a truncated
+      body without any sign of the error. A long download needs set_time_limit(0) or a declared Content-Length.
+    request: { method: GET, target: "/app/lifecycle/timelimit.php?case=after_flush" }
+    expect: { status: 200, body_length: 8192, duration_max_ms: 3000 }
+
   # ------------------------------------------------------- memory limit
   - id: php-life-memory-limit-ini
     tier: app
