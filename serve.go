@@ -78,9 +78,6 @@ func (g *Gateway) handle(w http.ResponseWriter, r *http.Request, cfg *config) er
 // readBody spools the request body so a slow client never holds a worker.
 func readBody(w http.ResponseWriter, r *http.Request, cfg *config) (*spool.Spool, error) {
 	sp := spool.New(cfg.spoolDir, cfg.spoolMemory)
-	if r.ContentLength > cfg.maxBody {
-		return nil, fail(http.StatusRequestEntityTooLarge, "request body of %d bytes exceeds %d", r.ContentLength, cfg.maxBody)
-	}
 	_, err := io.Copy(sp, http.MaxBytesReader(w, r.Body, cfg.maxBody))
 	if err == nil {
 		return sp, nil
@@ -194,6 +191,11 @@ func writeResponse(w http.ResponseWriter, r *http.Request, cfg *config, rep *rep
 	}
 	for _, name := range cfg.dropHeaders {
 		h.Del(name)
+	}
+	if _, ok := h["Content-Type"]; !ok {
+		// A nil entry stops net/http from sniffing a type the responder
+		// deliberately left out.
+		h["Content-Type"] = nil
 	}
 	bodyLen := rep.body.Len() - rep.parsed.BodyOffset
 	if h.Get("Content-Length") == "" && bodyAllowed(rep.parsed.Status) {

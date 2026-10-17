@@ -56,19 +56,6 @@ func writeRecord(w io.Writer, typ uint8, content []byte) error {
 	return err
 }
 
-// writeStream writes data as records of at most maxContent bytes, followed by
-// the empty record that ends the stream.
-func writeStream(w io.Writer, typ uint8, data []byte) error {
-	for len(data) > 0 {
-		n := min(len(data), maxContent)
-		if err := writeRecord(w, typ, data[:n]); err != nil {
-			return err
-		}
-		data = data[n:]
-	}
-	return writeRecord(w, typ, nil)
-}
-
 // readRecord reads one record. The content slice is only valid until the next
 // call.
 func readRecord(r io.Reader, scratch []byte) (recordHeader, []byte, error) {
@@ -115,13 +102,39 @@ func appendLength(b []byte, n int) []byte {
 	return binary.BigEndian.AppendUint32(b, uint32(n)|1<<31)
 }
 
-func encodeParams(params []Param) []byte {
-	var b []byte
+// writeParams writes the parameters as PARAMS records, then the empty record
+// that ends the stream. Pairs are never split across records unless a single
+// pair exceeds one record: php-fpm parses each record on its own and drops a
+// pair that spans two, although the specification allows it.
+func writeParams(w io.Writer, params []Param) error {
+	var rec []byte
 	for _, p := range params {
-		b = appendLength(b, len(p.Name))
-		b = appendLength(b, len(p.Value))
-		b = append(b, p.Name...)
-		b = append(b, p.Value...)
+		pair := encodePair(p)
+		if len(rec) > 0 && len(rec)+len(pair) > maxContent {
+			if err := writeRecord(w, typeParams, rec); err != nil {
+				return err
+			}
+			rec = rec[:0]
+		}
+		rec = append(rec, pair...)
+		for len(rec) > maxContent {
+			if err := writeRecord(w, typeParams, rec[:maxContent]); err != nil {
+				return err
+			}
+			rec = rec[maxContent:]
+		}
 	}
-	return b
+	if len(rec) > 0 {
+		if err := writeRecord(w, typeParams, rec); err != nil {
+			return err
+		}
+	}
+	return writeRecord(w, typeParams, nil)
+}
+
+func encodePair(p Param) []byte {
+	b := appendLength(nil, len(p.Name))
+	b = appendLength(b, len(p.Value))
+	b = append(b, p.Name...)
+	return append(b, p.Value...)
 }

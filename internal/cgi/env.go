@@ -34,6 +34,8 @@ type Config struct {
 var hopByHop = map[string]bool{
 	"Connection": true, "Keep-Alive": true, "Proxy-Connection": true,
 	"Te": true, "Transfer-Encoding": true, "Upgrade": true,
+	// Credentials for a proxy, not for the application behind us.
+	"Proxy-Authorization": true,
 }
 
 type env struct {
@@ -97,6 +99,9 @@ func setMeta(e *env, r *http.Request, c Config) {
 	}
 	host, port := splitHostPort(r.RemoteAddr)
 	e.set("REMOTE_ADDR", host)
+	// RFC 3875 section 4.1.9 allows REMOTE_ADDR as the value; a reverse
+	// lookup per request would stall the call.
+	e.set("REMOTE_HOST", host)
 	if port != "" {
 		e.set("REMOTE_PORT", port)
 	}

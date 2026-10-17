@@ -87,7 +87,7 @@ func sendRequest(w io.Writer, params []Param, stdin io.Reader) error {
 	if err := writeRecord(bw, typeBeginRequest, begin); err != nil {
 		return err
 	}
-	if err := writeStream(bw, typeParams, encodeParams(params)); err != nil {
+	if err := writeParams(bw, params); err != nil {
 		return err
 	}
 	if err := copyStdin(bw, stdin); err != nil {
