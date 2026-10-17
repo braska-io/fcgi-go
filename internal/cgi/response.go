@@ -98,3 +98,15 @@ func truncate(s string) string {
 	}
 	return s
 }
+
+// RemoveHopByHop deletes the fields that describe the responder's
+// connection. The gateway owns the client connection, and HTTP/2 forbids
+// these fields outright (RFC 9113 section 8.2.2).
+func RemoveHopByHop(h http.Header) {
+	for name := range connectionTokens(h) {
+		h.Del(name)
+	}
+	for name := range hopByHop {
+		h.Del(name)
+	}
+}

@@ -185,6 +185,7 @@ func parseReply(out *spool.Spool) (*cgi.Response, error) {
 }
 
 func writeResponse(w http.ResponseWriter, r *http.Request, cfg *config, rep *reply) error {
+	cgi.RemoveHopByHop(rep.parsed.Header)
 	h := w.Header()
 	for name, values := range rep.parsed.Header {
 		h[name] = values
