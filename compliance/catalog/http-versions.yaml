@@ -848,6 +848,7 @@ cases:
     summary: >-
       Content-Length is available as CONTENT_LENGTH, so no HTTP_CONTENT_LENGTH
       exists on any version.
+    waived: "docs/design.md, deviations: the gateway also passes Content-Type and Content-Length as HTTP_ variables, as nginx does; applications detect JSON bodies on HTTP_CONTENT_TYPE."
     request:
       method: POST
       target: "/dump.php"
@@ -881,6 +882,7 @@ cases:
     summary: >-
       Content-Type is available as CONTENT_TYPE, so no HTTP_CONTENT_TYPE
       exists on any version.
+    waived: "docs/design.md, deviations: the gateway also passes Content-Type and Content-Length as HTTP_ variables, as nginx does; applications detect JSON bodies on HTTP_CONTENT_TYPE."
     request:
       method: POST
       target: "/dump.php"

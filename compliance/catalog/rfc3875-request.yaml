@@ -477,6 +477,7 @@ cases:
     source: "RFC 3875 section 4.1.13"
     level: MUST
     summary: When the route maps the whole path to path_info, SCRIPT_NAME is the empty path and is still set.
+    waived: "docs/design.md: SCRIPT_NAME is always /<script>, the script the caller mounted; front controllers depend on it."
     request:
       method: GET
       target: "/users/7"
@@ -1094,6 +1095,7 @@ cases:
     source: "RFC 3875 section 4.1.18"
     level: SHOULD
     summary: Content-Length is available as CONTENT_LENGTH, so HTTP_CONTENT_LENGTH is not set.
+    waived: "docs/design.md, deviations: the gateway also passes Content-Type and Content-Length as HTTP_ variables, as nginx does; applications detect JSON bodies on HTTP_CONTENT_TYPE."
     request:
       method: POST
       target: "/dump.php"
@@ -1112,6 +1114,7 @@ cases:
     source: "RFC 3875 section 4.1.18"
     level: SHOULD
     summary: Content-Type is available as CONTENT_TYPE, so HTTP_CONTENT_TYPE is not set.
+    waived: "docs/design.md, deviations: the gateway also passes Content-Type and Content-Length as HTTP_ variables, as nginx does; applications detect JSON bodies on HTTP_CONTENT_TYPE."
     request:
       method: POST
       target: "/dump.php"

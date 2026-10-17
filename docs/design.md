@@ -68,9 +68,24 @@ Options come in two kinds. An `Option` works on `New` and on `Script`. On `Scrip
 
 A name set at a later stage replaces the earlier value. An empty string from stages 3 to 5 removes the parameter.
 
-## The gateway deviates from RFC 3875 in one place
+## The gateway deviates from RFC 3875 where applications depend on nginx
 
-RFC 3875 section 4.1.18 says a server SHOULD NOT pass the `Authorization` header to the script. fcgi-go passes it as `HTTP_AUTHORIZATION`, as nginx and Caddy do. Applications need it for Basic and Bearer authentication. The compliance case for the RFC rule, `rfc3875-req-http-no-authorization`, stays in the catalog and is waived with this reason. A waived case shows as skipped with its reason, never as passed.
+Each deviation follows what nginx sends, because PHP applications rely on it. The compliance cases for the RFC rule stay in the catalog and are waived with the reason below.
+
+| RFC 3875 rule | fcgi-go | Why |
+| --- | --- | --- |
+| Section 4.1.18: a server SHOULD NOT pass `Authorization` | passes it as `HTTP_AUTHORIZATION` | applications need it for Basic and Bearer authentication |
+| Section 4.1.18: a server SHOULD remove `Content-Type` and `Content-Length` from `HTTP_*` | passes them as `HTTP_CONTENT_TYPE` and `HTTP_CONTENT_LENGTH` too | applications detect JSON bodies on `HTTP_CONTENT_TYPE` |
+| Section 3.3: `SCRIPT_NAME` may be empty when `PATH_INFO` covers the path | `SCRIPT_NAME` is always `/<script>` | front controllers compare it with their own name |
+
+## The gateway sets these variables beyond RFC 3875
+
+| Variable | Value |
+| --- | --- |
+| `REQUEST_URI` | the raw request-target as the client sent it, with the query; not decoded, not normalised |
+| `HTTPS` | `on` when the client connection uses TLS; absent otherwise |
+| `DOCUMENT_ROOT` | the value of `WithDocumentRoot` |
+| `SCRIPT_FILENAME` | `DOCUMENT_ROOT` plus `/<script>` |
 
 ## Client headers cannot forge caller parameters
 
@@ -100,6 +115,7 @@ php-fpm ignores `FCGI_ABORT_REQUEST`. Closing the connection is the only cancel,
 | deadline reached during the call | 504 |
 | responder closed without `FCGI_END_REQUEST`, or sent broken framing | 502 |
 | responder output without a complete CGI header block | 502 |
+| responder `Content-Length` differs from the body it sent | 502 |
 | gateway shutting down | 503 |
 
 A failed call never sends part of the responder's output to the client. The library never retries a call.
@@ -110,6 +126,7 @@ A failed call never sends part of the responder's output to the client. The libr
 - A `Location` with an absolute URI and no `Status:` gives 302.
 - `FCGI_STDERR` content goes to the logger at warn level, capped at 8 KiB per call. It never reaches the client.
 - A non-zero application status in `FCGI_END_REQUEST` is logged; the response stands.
+- `Range` request headers reach the responder unchanged. The gateway never builds a 206 itself; RFC 9110 section 14.2 allows a server to ignore `Range`.
 
 ## Readiness never runs a script
 
