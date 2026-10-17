@@ -27,11 +27,14 @@ case 'insert':
     // would write nothing. PHP notices a lost client only when a write fails,
     // and a proxy between gateway and fpm accepts the first writes after the
     // client left, so the body goes out in three writes with short gaps.
-    foreach (['ins', 'er', 'ted'] as $part) {
+    foreach (str_split('inserted') as $part) {
         echo $part;
         ob_flush();
         flush();
-        usleep(50000);
+        usleep(100000);
+        if (connection_aborted()) {
+            break;
+        }
     }
     if (connection_aborted()) {
         $db->exec('ROLLBACK');
