@@ -139,7 +139,7 @@ func (g *Gateway) acquire(ctx context.Context) (func(), error) {
 }
 
 func (g *Gateway) roundTrip(ctx context.Context, r *http.Request, cfg *config, in, out *spool.Spool, stderr io.Writer) error {
-	conn, err := fastcgi.Dial(ctx, g.address)
+	conn, err := g.dialer.Dial(ctx)
 	if err != nil {
 		return classify(ctx, err)
 	}

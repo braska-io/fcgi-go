@@ -8,27 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"sync"
 )
 
 // Param is one FastCGI name-value pair.
 type Param struct{ Name, Value string }
-
-// Dial opens a connection to address, either "unix:<path>" or
-// "tcp:<host:port>".
-func Dial(ctx context.Context, address string) (net.Conn, error) {
-	network, addr, ok := strings.Cut(address, ":")
-	if !ok || (network != "unix" && network != "tcp") || addr == "" {
-		return nil, fmt.Errorf("invalid responder address %q", address)
-	}
-	var d net.Dialer
-	c, err := d.DialContext(ctx, network, addr)
-	if err != nil {
-		return nil, fmt.Errorf("dial responder: %w", err)
-	}
-	return c, nil
-}
 
 // Result is what the responder reported in FCGI_END_REQUEST.
 type Result struct {

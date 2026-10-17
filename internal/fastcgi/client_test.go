@@ -72,7 +72,7 @@ func endRequest(t *testing.T, c net.Conn, appStatus uint32) {
 
 func dial(t *testing.T, addr string) net.Conn {
 	t.Helper()
-	c, err := Dial(context.Background(), addr)
+	c, err := NewDialer(addr).Dial(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestDoClosesConnectionWhenContextEnds(t *testing.T) {
 
 func TestDialRejectsBadAddress(t *testing.T) {
 	for _, a := range []string{"", "tcp", "http:host:80", "unix:"} {
-		if _, err := Dial(context.Background(), a); err == nil {
+		if _, err := NewDialer(a).Dial(context.Background()); err == nil {
 			t.Errorf("Dial(%q) succeeded", a)
 		}
 	}

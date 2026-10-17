@@ -40,12 +40,14 @@ func (g *Gateway) Shutdown(ctx context.Context) error
 ```
 
 `address` is `unix:<path>` or `tcp:<host:port>`.
+A host name resolves at most every 5 s, and again after a failed dial.
+Resolving per call would cost a DNS round trip per request.
 
 Options come in two kinds. An `Option` works on `New` and on `Script`. On `Script` it overrides the gateway's value for that script only. A `GatewayOption` works on `New` only, because it describes the shared connection to the responder.
 
 | Option | Kind | Default | Meaning |
 | --- | --- | --- | --- |
-| `WithMaxConns(n)` | gateway | 16 | concurrent calls to the responder; set it to the responder's worker count |
+| `WithMaxConns(n)` | gateway | 16 | concurrent calls to the responder; set it to 2–4 times the responder's worker count |
 | `WithSpool(dir, inMemory)` | gateway | `os.TempDir()`, 1 MiB | the spool: request and response bodies stay in memory up to `inMemory` bytes, then move to a file in `dir` |
 | `WithDocumentRoot(dir)` | gateway | `""` | `DOCUMENT_ROOT`, and the base of `SCRIPT_FILENAME` |
 | `WithProtectedHeaders(names...)` | gateway | none | client headers that never reach the responder; a trailing `*` matches a prefix |
@@ -69,7 +71,7 @@ Options come in two kinds. An `Option` works on `New` and on `Script`. On `Scrip
 
 A name set at a later stage replaces the earlier value. An empty string from stages 3 to 5 removes the parameter.
 
-The library sends parameters with one call only. A responder can still keep their effect: php-fpm applies `PHP_VALUE` and `PHP_ADMIN_VALUE` to the worker process, so later calls of any script on that worker see the change, and a `PHP_ADMIN_VALUE` stays locked against `ini_set`. Set such values in the pool configuration, for every script alike, and not with a script's `WithParam`. The cases `php-param-*` show the behaviour.
+The library sends parameters with one call only. A responder can still keep their effect. php-fpm applies `PHP_VALUE` and `PHP_ADMIN_VALUE` to the worker process. Later calls of any script on that worker see the change, and a `PHP_ADMIN_VALUE` stays locked against `ini_set`. Set such values in the pool configuration, for every script alike, and not with a script's `WithParam`. The cases `php-param-*` show the behaviour.
 
 ## The gateway deviates from RFC 3875 where applications depend on nginx
 
@@ -106,6 +108,9 @@ A caller passes identity or environment through parameters such as `HTTP_X_AUTH_
 ## Each call gets its own connection, capped by a semaphore
 
 php-fpm does not multiplex requests on one connection (`FCGI_MPXS_CONNS` is 0). A kept-alive connection holds its worker even while idle. Version 0.1 therefore dials the address per call and does not set `FCGI_KEEP_CONN`. `WithMaxConns` caps concurrent calls; a call that gets no slot before its deadline answers 503.
+A cap equal to the worker count leaves each worker idle while the next call is dialled.
+A higher cap keeps the next call waiting in the responder's listen backlog, as nginx does.
+The [benchmarks](../benchmarks/README.md) show the difference.
 
 ## A cancelled or failed call closes its connection
 
