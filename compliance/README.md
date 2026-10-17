@@ -56,6 +56,7 @@ cases:
       query_string: "a=1"                   # optional override of QUERY_STRING
       params: { HTTP_X_AUTH_SUBJECT: "7" }  # params the caller sets; written last
       timeout_ms: 500                       # optional per-call deadline
+      max_response_bytes: 65536             # optional response limit
     expect:
       reaches_responder: true               # default true; false = the gateway or server answers itself
       status: 200                           # exact status, or:

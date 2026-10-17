@@ -30,6 +30,7 @@ type config struct {
 	logger       *slog.Logger
 	timeout      time.Duration
 	maxBody      int64
+	maxResponse  int64
 	params       map[string]string
 	paramsFunc   func(*http.Request) map[string]string
 	pathInfo     func(*http.Request) string
@@ -45,6 +46,7 @@ func defaultConfig() config {
 		logger:      slog.Default(),
 		timeout:     60 * time.Second,
 		maxBody:     10 << 20,
+		maxResponse: 1 << 30,
 	}
 }
 
@@ -108,6 +110,12 @@ func WithTimeout(d time.Duration) Option {
 // WithMaxBody limits the request body; larger bodies answer 413.
 func WithMaxBody(n int64) Option {
 	return bothOption(func(c *config) { c.maxBody = n })
+}
+
+// WithMaxResponse limits what the responder may write to stdout, header
+// block included; larger output answers 502. It bounds the spool.
+func WithMaxResponse(n int64) Option {
+	return bothOption(func(c *config) { c.maxResponse = n })
 }
 
 // WithParam sets a fixed parameter. A script's value replaces the

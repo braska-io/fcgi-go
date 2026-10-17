@@ -134,3 +134,16 @@ scenarios:
             expect: { status: 200, body: "..............." }
           - request: { method: GET, target: "/respond?body=quick" }
             expect: { status: 200, body: quick, duration_max_ms: 800 }
+
+  - id: gw-next-call-after-response-limit-succeeds
+    tier: gateway
+    source: "docs/design.md, WithMaxResponse"
+    level: MUST
+    summary: A call cut off at the response limit leaves no trace in the next call.
+    steps:
+      - request: { method: GET, target: "/big?bytes=1048576" }
+        route: { max_response_bytes: 65536 }
+        expect: { status: 502, reaches_responder: false }
+      - wait_ms: 1000
+      - request: { method: GET, target: "/respond?body=fresh" }
+        expect: { status: 200, body: fresh }

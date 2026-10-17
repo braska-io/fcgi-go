@@ -90,6 +90,7 @@ type Route struct {
 	QueryString *string           `yaml:"query_string"`
 	Params      map[string]string `yaml:"params"`
 	TimeoutMS   int               `yaml:"timeout_ms"`
+	MaxResponse int64             `yaml:"max_response_bytes"`
 }
 
 // Expect is what the client and the responder must observe.

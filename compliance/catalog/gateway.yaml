@@ -187,3 +187,27 @@ cases:
     summary: A HEAD response carries no Content-Length the responder did not send; an invented 0 would contradict the GET response.
     request: { method: HEAD, target: "/respond?body=hello" }
     expect: { status: 200, headers_absent: [Content-Length], body: "" }
+  - id: gw-response-under-limit-passes
+    tier: gateway
+    source: "docs/design.md, WithMaxResponse"
+    level: MUST
+    summary: Output below the response limit reaches the client complete.
+    request: { method: GET, target: "/big?bytes=32768" }
+    route: { max_response_bytes: 65536 }
+    expect: { status: 200, body_length: 32768 }
+  - id: gw-response-over-limit-502
+    tier: gateway
+    source: "docs/design.md, WithMaxResponse"
+    level: MUST
+    summary: Output above the response limit answers 502, and none of it reaches the client.
+    request: { method: GET, target: "/big?bytes=131072" }
+    route: { max_response_bytes: 65536 }
+    expect: { status: 502, reaches_responder: false }
+  - id: gw-response-over-limit-stops-reading
+    tier: gateway
+    source: "docs/design.md, WithMaxResponse"
+    level: MUST
+    summary: The gateway stops reading at the limit instead of spooling the rest of a 256 MiB body.
+    request: { method: GET, target: "/big?bytes=268435456" }
+    route: { max_response_bytes: 65536 }
+    expect: { status: 502, reaches_responder: false, duration_max_ms: 3000 }
