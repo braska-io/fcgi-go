@@ -4,7 +4,7 @@ tasks:
   test:
     desc: Run the library's unit tests
     cmds:
-      - go test ./...
+      - go test ./... {{.CLI_ARGS}}
 
   lint:
     desc: Vet both modules
