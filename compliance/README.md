@@ -143,6 +143,13 @@ task compliance
 
 The task builds and starts the four reference responders with Docker Compose, then runs the Ginkgo suite against each. A responder that does not start fails the suite; it never skips.
 
+Each case carries its tier, its level, and its transport (`h1`, `h2`, `h3`) as Ginkgo labels. Pass Ginkgo flags after `--` to run a subset:
+
+```sh
+task compliance -- -ginkgo.focus "gw-protected-header-dropped"
+task compliance -- -ginkgo.label-filter "h2 && MUST"
+```
+
 Stop the responders afterwards:
 
 ```sh
