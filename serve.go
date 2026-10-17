@@ -79,6 +79,10 @@ func (g *Gateway) handle(w http.ResponseWriter, r *http.Request, cfg *config) er
 // readBody spools the request body so a slow client never holds a worker.
 func readBody(w http.ResponseWriter, r *http.Request, cfg *config) (*spool.Spool, error) {
 	sp := spool.New(cfg.spoolDir, cfg.spoolMemory)
+	if r.ContentLength > 0 && r.ContentLength <= cfg.maxBody {
+		// A failure here recurs on the first write and is reported there.
+		_ = sp.Expect(r.ContentLength)
+	}
 	n, err := io.Copy(sp, http.MaxBytesReader(w, r.Body, cfg.maxBody))
 	if err == nil && r.Header.Get("Content-Length") != "" && r.ContentLength >= 0 && n != r.ContentLength {
 		// net/http enforces this on HTTP/1.1 and HTTP/2; quic-go's HTTP/3
