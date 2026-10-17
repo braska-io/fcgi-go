@@ -79,6 +79,10 @@ func (g *Gateway) handle(w http.ResponseWriter, r *http.Request, cfg *config) er
 // readBody spools the request body so a slow client never holds a worker.
 func readBody(w http.ResponseWriter, r *http.Request, cfg *config) (*spool.Spool, error) {
 	sp := spool.New(cfg.spoolDir, cfg.spoolMemory)
+	if r.ContentLength > 0 && r.ContentLength <= cfg.maxBody {
+		// A failure here recurs on the first write and is reported there.
+		_ = sp.Expect(r.ContentLength)
+	}
 	n, err := io.Copy(sp, http.MaxBytesReader(w, r.Body, cfg.maxBody))
 	if err == nil && r.Header.Get("Content-Length") != "" && r.ContentLength >= 0 && n != r.ContentLength {
 		// net/http enforces this on HTTP/1.1 and HTTP/2; quic-go's HTTP/3
@@ -135,7 +139,7 @@ func (g *Gateway) acquire(ctx context.Context) (func(), error) {
 }
 
 func (g *Gateway) roundTrip(ctx context.Context, r *http.Request, cfg *config, in, out *spool.Spool, stderr io.Writer) error {
-	conn, err := fastcgi.Dial(ctx, g.address)
+	conn, err := g.dialer.Dial(ctx)
 	if err != nil {
 		return classify(ctx, err)
 	}
@@ -151,7 +155,7 @@ func (g *Gateway) roundTrip(ctx context.Context, r *http.Request, cfg *config, i
 		BodyLength:   in.Len(),
 		HasBody:      hasBody(r, in),
 	})
-	res, err := fastcgi.Do(ctx, conn, params, in.Reader(0), &limitWriter{w: out, left: cfg.maxResponse}, stderr)
+	res, err := fastcgi.Do(ctx, conn, params, in.Reader(0), in.Len(), &limitWriter{w: out, left: cfg.maxResponse}, stderr)
 	if errors.Is(err, errTooLarge) {
 		return fail(http.StatusBadGateway, "%w: %d bytes", errTooLarge, cfg.maxResponse)
 	}

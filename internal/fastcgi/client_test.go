@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -71,7 +72,7 @@ func endRequest(t *testing.T, c net.Conn, appStatus uint32) {
 
 func dial(t *testing.T, addr string) net.Conn {
 	t.Helper()
-	c, err := Dial(context.Background(), addr)
+	c, err := NewDialer(addr).Dial(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestDoRoundTrip(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 	body := strings.Repeat("b", 70000)
-	res, err := Do(context.Background(), dial(t, addr), []Param{{"K", "v"}}, strings.NewReader(body), &stdout, &stderr)
+	res, err := Do(context.Background(), dial(t, addr), []Param{{"K", "v"}}, strings.NewReader(body), int64(len(body)), &stdout, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestDoRejectsEOFBeforeEndRequest(t *testing.T) {
 		readRequest(t, c)
 		_ = writeRecord(c, typeStdout, []byte("partial"))
 	})
-	_, err := Do(context.Background(), dial(t, addr), nil, nil, io.Discard, io.Discard)
+	_, err := Do(context.Background(), dial(t, addr), nil, nil, 0, io.Discard, io.Discard)
 	if !errors.Is(err, ErrProtocol) {
 		t.Fatalf("got %v, want ErrProtocol", err)
 	}
@@ -128,7 +129,7 @@ func TestDoClosesConnectionWhenContextEnds(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := Do(ctx, dial(t, addr), nil, nil, io.Discard, io.Discard)
+	_, err := Do(ctx, dial(t, addr), nil, nil, 0, io.Discard, io.Discard)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v, want deadline exceeded", err)
 	}
@@ -141,8 +142,61 @@ func TestDoClosesConnectionWhenContextEnds(t *testing.T) {
 
 func TestDialRejectsBadAddress(t *testing.T) {
 	for _, a := range []string{"", "tcp", "http:host:80", "unix:"} {
-		if _, err := Dial(context.Background(), a); err == nil {
+		if _, err := NewDialer(a).Dial(context.Background()); err == nil {
 			t.Errorf("Dial(%q) succeeded", a)
 		}
+	}
+}
+
+func encodePair(p Param) []byte { return appendPair(nil, p) }
+
+// slowReader hands out stdin slowly and records whether a read was still
+// running after the caller declared stdin released.
+type slowReader struct {
+	released atomic.Bool
+	late     atomic.Bool
+}
+
+func (r *slowReader) Read(p []byte) (int, error) {
+	time.Sleep(5 * time.Millisecond)
+	if r.released.Load() {
+		r.late.Store(true)
+	}
+	return copy(p, make([]byte, min(len(p), 4096))), nil
+}
+
+// The caller frees stdin (a pooled spool) as soon as Do returns, so no read
+// of it may happen after that, also when the responder fails mid-request.
+func TestDoStopsReadingStdinBeforeReturning(t *testing.T) {
+	addr := serve(t, func(c net.Conn) {
+		var h [8]byte
+		_, _ = io.ReadFull(c, h[:]) // then close without END_REQUEST
+	})
+	stdin := &slowReader{}
+	_, err := Do(context.Background(), dial(t, addr), nil, stdin, 1<<30, io.Discard, io.Discard)
+	stdin.released.Store(true)
+	if err == nil {
+		t.Fatal("want an error for a responder that closes early")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if stdin.late.Load() {
+		t.Fatal("stdin was still read after Do returned")
+	}
+}
+
+// A small request goes out on the calling goroutine. A responder that
+// answers without reading it must still get its answer through.
+func TestDoSmallRequestResponderIgnoresStdin(t *testing.T) {
+	addr := serve(t, func(c net.Conn) {
+		_ = writeRecord(c, typeStdout, []byte("early"))
+		endRequest(t, c, 0)
+	})
+	var stdout bytes.Buffer
+	body := strings.Repeat("s", 100)
+	if _, err := Do(context.Background(), dial(t, addr), nil, strings.NewReader(body), int64(len(body)), &stdout, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "early" {
+		t.Fatalf("stdout %q", stdout.String())
 	}
 }

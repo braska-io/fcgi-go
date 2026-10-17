@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // MaxHeaderBlock bounds the CGI header block so a broken responder cannot
@@ -28,9 +29,16 @@ type Response struct {
 	BodyOffset int64
 }
 
+var readers = sync.Pool{New: func() any { return bufio.NewReaderSize(nil, 4096) }}
+
 // ParseResponse reads the header block of a CGI response (RFC 3875 section 6).
 func ParseResponse(r io.Reader) (*Response, error) {
-	br := bufio.NewReaderSize(r, 4096)
+	br := readers.Get().(*bufio.Reader)
+	br.Reset(r)
+	defer func() {
+		br.Reset(nil)
+		readers.Put(br)
+	}()
 	resp := &Response{Header: http.Header{}}
 	var consumed int64
 	for {

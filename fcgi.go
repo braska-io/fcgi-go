@@ -26,8 +26,8 @@ var ErrNotImplemented = errors.New("fcgi: not implemented")
 
 // Gateway is the shared connection setup to one FastCGI responder.
 type Gateway struct {
-	address string
-	cfg     config
+	dialer *fastcgi.Dialer
+	cfg    config
 
 	// slots is the semaphore behind WithMaxConns, shared by all scripts.
 	slots chan struct{}
@@ -40,7 +40,7 @@ type Gateway struct {
 // New configures a gateway to the responder at address, either
 // "unix:<path>" or "tcp:<host:port>". It does not dial.
 func New(address string, opts ...GatewayOption) *Gateway {
-	g := &Gateway{address: address, cfg: defaultConfig()}
+	g := &Gateway{dialer: fastcgi.NewDialer(address), cfg: defaultConfig()}
 	for _, o := range opts {
 		o.applyGateway(&g.cfg)
 	}
@@ -64,7 +64,7 @@ func (g *Gateway) Script(name string, opts ...ScriptOption) http.HandlerFunc {
 // script. A FastCGI request would occupy a worker and make a saturated pool
 // look unready.
 func (g *Gateway) Ping(ctx context.Context) error {
-	conn, err := fastcgi.Dial(ctx, g.address)
+	conn, err := g.dialer.Dial(ctx)
 	if err != nil {
 		return fmt.Errorf("ping: %w", err)
 	}

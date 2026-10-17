@@ -28,7 +28,7 @@ func record(typ byte, content []byte) []byte {
 	return append(b, make([]byte, pad)...)
 }
 
-func newFake(t *testing.T, reply func(conn net.Conn) []byte) *fakeResponder {
+func newFake(t testing.TB, reply func(conn net.Conn) []byte) *fakeResponder {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

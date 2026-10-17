@@ -38,40 +38,44 @@ var hopByHop = map[string]bool{
 	"Proxy-Authorization": true,
 }
 
+// env is the parameter list in the order the stages set it. A slice beats a
+// map here: a request has a few dozen variables, and a linear scan over them
+// costs less than hashing and the map's allocations.
 type env struct {
-	order []string
-	vals  map[string]string
+	ps []fastcgi.Param
 }
 
-func newEnv() *env { return &env{vals: map[string]string{}} }
+func newEnv() *env { return &env{ps: make([]fastcgi.Param, 0, 32)} }
 
 func (e *env) set(name, value string) {
-	if _, ok := e.vals[name]; !ok {
-		e.order = append(e.order, name)
+	for i := range e.ps {
+		if e.ps[i].Name == name {
+			e.ps[i].Value = value
+			return
+		}
 	}
-	e.vals[name] = value
+	e.ps = append(e.ps, fastcgi.Param{Name: name, Value: value})
+}
+
+func (e *env) remove(name string) {
+	e.ps = slices.DeleteFunc(e.ps, func(p fastcgi.Param) bool { return p.Name == name })
 }
 
 // override applies stages 3 to 5: an empty value removes the variable.
 func (e *env) override(m map[string]string) {
+	if len(m) == 0 {
+		return
+	}
 	for _, name := range sortedKeys(m) {
 		if m[name] == "" {
-			delete(e.vals, name)
+			e.remove(name)
 			continue
 		}
 		e.set(name, m[name])
 	}
 }
 
-func (e *env) params() []fastcgi.Param {
-	out := make([]fastcgi.Param, 0, len(e.order))
-	for _, name := range e.order {
-		if v, ok := e.vals[name]; ok {
-			out = append(out, fastcgi.Param{Name: name, Value: v})
-		}
-	}
-	return out
-}
+func (e *env) params() []fastcgi.Param { return e.ps }
 
 // Build returns the FastCGI parameters in the order docs/design.md fixes.
 func Build(r *http.Request, c Config) []fastcgi.Param {
@@ -162,17 +166,22 @@ func setHeaders(e *env, r *http.Request, protected []string) {
 		if hopByHop[name] || drop[name] || strings.ContainsAny(name, "_.") {
 			continue
 		}
-		if isProtected(name, protected) {
+		key := httpName(name)
+		if isProtected(key[len("HTTP_"):], protected) {
 			continue
 		}
-		e.set("HTTP_"+normalise(name), joinValues(name, r.Header[name]))
+		e.set(key, joinValues(name, r.Header[name]))
 	}
 }
 
 // connectionTokens returns the canonical names the Connection header lists.
 func connectionTokens(h http.Header) map[string]bool {
+	values := h.Values("Connection")
+	if len(values) == 0 {
+		return nil
+	}
 	out := map[string]bool{}
-	for _, v := range h.Values("Connection") {
+	for _, v := range values {
 		for tok := range strings.SplitSeq(v, ",") {
 			if tok = strings.TrimSpace(tok); tok != "" {
 				out[http.CanonicalHeaderKey(tok)] = true
@@ -192,26 +201,51 @@ func joinValues(name string, values []string) string {
 	return strings.Join(values, sep)
 }
 
-// normalise upper-cases a name and turns everything outside A-Z0-9 into "_".
-func normalise(name string) string {
-	b := []byte(strings.ToUpper(name))
-	for i, ch := range b {
-		if (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') {
-			b[i] = '_'
-		}
+// httpName is "HTTP_" plus the name upper-cased, with everything outside
+// A-Z0-9 turned into "_", built in one allocation.
+func httpName(name string) string {
+	b := make([]byte, len("HTTP_")+len(name))
+	copy(b, "HTTP_")
+	for i := range len(name) {
+		b[len("HTTP_")+i] = normByte(name[i])
 	}
 	return string(b)
 }
 
-func isProtected(name string, protected []string) bool {
-	n := normalise(name)
-	return slices.ContainsFunc(protected, func(p string) bool {
-		np := normalise(p)
-		if strings.HasSuffix(p, "*") {
-			return strings.HasPrefix(n, strings.TrimSuffix(np, "_"))
+func normByte(c byte) byte {
+	switch {
+	case c >= 'a' && c <= 'z':
+		return c - 'a' + 'A'
+	case c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return c
+	}
+	return '_'
+}
+
+// isProtected reports whether the normalised name n matches a protected
+// pattern. A trailing "*" matches a prefix; patterns are normalised while
+// comparing, so the check allocates nothing.
+func isProtected(n string, protected []string) bool {
+	for _, p := range protected {
+		prefix := strings.HasSuffix(p, "*")
+		if prefix {
+			p = strings.TrimSuffix(p, "*")
 		}
-		return n == np
-	})
+		if len(n) < len(p) || (!prefix && len(n) != len(p)) {
+			continue
+		}
+		match := true
+		for i := range len(p) {
+			if n[i] != normByte(p[i]) {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 func sortedKeys[V any](m map[string]V) []string {

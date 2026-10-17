@@ -143,3 +143,23 @@ func TestBuildPathInfoOverride(t *testing.T) {
 		t.Errorf("got PATH_INFO %q QUERY_STRING %q", env["PATH_INFO"], env["QUERY_STRING"])
 	}
 }
+
+// A "*" pattern matches the normalised prefix before it, separator
+// included: X-Auth-* protects X-Auth-Subject but not X-Authorization or a
+// bare X-Auth.
+func TestProtectedPrefixKeepsSeparator(t *testing.T) {
+	for name, want := range map[string]bool{
+		"X_AUTH_SUBJECT":  true,
+		"X_AUTH_":         true,
+		"X_AUTHORIZATION": false,
+		"X_AUTH":          false,
+		"Y_AUTH_SUBJECT":  false,
+	} {
+		if got := isProtected(name, []string{"X-Auth-*"}); got != want {
+			t.Errorf("isProtected(%q) = %t, want %t", name, got, want)
+		}
+	}
+	if !isProtected("X_TOKEN", []string{"x-token"}) || isProtected("X_TOKENS", []string{"x-token"}) {
+		t.Error("an exact pattern must match the whole name, any case")
+	}
+}
