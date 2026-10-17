@@ -1,0 +1,46 @@
+name: Bug report
+description: The library or the compliance suite does something the specification or the design does not allow.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report security problems privately, as SECURITY.md describes. Do not use this form for them.
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: The commit of fcgi-go you tested.
+      placeholder: 1a2b3c4
+    validations:
+      required: true
+  - type: input
+    id: responder
+    attributes:
+      label: FastCGI application
+      description: The responder and its version, or the reference responder from compliance/fixtures.
+      placeholder: php-fpm 8.3
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The HTTP request, the handler setup, or the compliance case ID.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should happen, with the specification section or the docs/design.md section that says so.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened. Include status, headers, the parameters the responder received, or log output.
+    validations:
+      required: true

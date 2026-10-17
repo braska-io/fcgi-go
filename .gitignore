@@ -1,0 +1,4 @@
+/compliance/fixtures/rust/target/
+*.test
+*.out
+.DS_Store

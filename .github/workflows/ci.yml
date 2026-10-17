@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: |
+          go vet ./...
+          cd compliance && go vet ./...
+      - name: Unit tests
+        run: go test ./...
+      - name: Catalog is valid
+        working-directory: compliance
+        run: go test ./... -run TestCompliance -ginkgo.focus "has a catalog"
+
+  compliance:
+    # Expected to fail until the gateway is implemented; the failures are
+    # the specification.
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Start the reference responders
+        run: docker compose up -d --build --wait
+      - name: Run the compliance suite
+        working-directory: compliance
+        run: go test ./... -timeout 30m -ginkgo.no-color

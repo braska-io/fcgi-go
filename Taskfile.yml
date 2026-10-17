@@ -1,0 +1,36 @@
+version: "3"
+
+tasks:
+  test:
+    desc: Run the library's unit tests
+    cmds:
+      - go test ./...
+
+  lint:
+    desc: Vet both modules
+    cmds:
+      - go vet ./...
+      - cd compliance && go vet ./...
+
+  catalog:
+    desc: Load and validate the compliance catalog without running any case
+    dir: compliance
+    cmds:
+      - go test ./... -run TestCompliance -ginkgo.focus "has a catalog"
+
+  responders:up:
+    desc: Build and start the reference responders
+    cmds:
+      - docker compose up -d --build --wait
+
+  responders:down:
+    desc: Stop the reference responders
+    cmds:
+      - docker compose down
+
+  compliance:
+    desc: Run the compliance suite against the reference responders
+    deps: [responders:up]
+    dir: compliance
+    cmds:
+      - go test ./... -timeout 30m {{.CLI_ARGS}}

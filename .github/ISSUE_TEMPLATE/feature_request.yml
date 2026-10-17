@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a change to the API, the design, or the compliance suite.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you cannot do today, and why it matters for serving a FastCGI application.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The change you suggest. For a new compliance case, cite the document and section it comes from.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Other ways to solve the problem, including code in the caller's http.ServeMux.
