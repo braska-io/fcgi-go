@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 )
 
 // Param is one FastCGI name-value pair.
@@ -38,14 +39,15 @@ type Result struct {
 // Do runs one request on conn and always closes it. php-fpm ignores
 // FCGI_ABORT_REQUEST, so closing the connection is the only way to cancel:
 // it happens as soon as ctx ends. Stdout and stderr stream into the writers.
-func Do(ctx context.Context, conn net.Conn, params []Param, stdin io.Reader, stdout, stderr io.Writer) (Result, error) {
+// stdinLen is the length of stdin; Do does not read stdin after it returns.
+func Do(ctx context.Context, conn net.Conn, params []Param, stdin io.Reader, stdinLen int64, stdout, stderr io.Writer) (Result, error) {
 	stop := context.AfterFunc(ctx, func() { abort(conn) })
 	defer func() {
 		stop()
 		_ = conn.Close()
 	}()
 
-	res, err := roundTrip(conn, params, stdin, stdout, stderr)
+	res, err := roundTrip(conn, params, stdin, stdinLen, stdout, stderr)
 	if err != nil {
 		// A context that ended explains the closed connection better than
 		// the I/O error it caused.
@@ -67,9 +69,24 @@ func abort(conn net.Conn) {
 	_ = conn.Close()
 }
 
-func roundTrip(conn net.Conn, params []Param, stdin io.Reader, stdout, stderr io.Writer) (Result, error) {
-	// The request is sent in the background so a responder that answers
-	// before it has read all of stdin does not deadlock us.
+// inlineStdin is the largest stdin sent before reading the response, on the
+// calling goroutine. A request that small fits the socket buffers, so the
+// write cannot block on a responder that answers before reading its input.
+const inlineStdin = 8 << 10
+
+func roundTrip(conn net.Conn, params []Param, stdin io.Reader, stdinLen int64, stdout, stderr io.Writer) (Result, error) {
+	if stdinLen <= inlineStdin {
+		sendE := sendRequest(conn, params, stdin)
+		// A responder may answer and close without reading its input; its
+		// answer still counts, and explains a failed write better.
+		res, err := readResponse(conn, stdout, stderr)
+		if err != nil && sendE != nil && !isClosed(sendE) {
+			return res, fmt.Errorf("send request: %w (then: %w)", sendE, err)
+		}
+		return res, err
+	}
+	// A larger request is sent in the background so a responder that
+	// answers before it has read all of stdin does not deadlock us.
 	sendErr := make(chan error, 1)
 	go func() { sendErr <- sendRequest(conn, params, stdin) }()
 
@@ -92,12 +109,24 @@ func isClosed(err error) bool {
 	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
 }
 
+// The 64 KiB buffers match the largest record, so a full STDIN or STDOUT
+// record moves in one system call. Pooling them keeps a small request from
+// paying for them.
+var (
+	writers = sync.Pool{New: func() any { return bufio.NewWriterSize(nil, 64<<10) }}
+	readers = sync.Pool{New: func() any { return bufio.NewReaderSize(nil, 64<<10) }}
+)
+
 func sendRequest(w io.Writer, params []Param, stdin io.Reader) error {
-	bw := bufio.NewWriterSize(w, 64<<10)
-	begin := make([]byte, 8)
-	binary.BigEndian.PutUint16(begin, roleResponder)
+	bw := writers.Get().(*bufio.Writer)
+	bw.Reset(w)
+	defer func() {
+		bw.Reset(nil)
+		writers.Put(bw)
+	}()
 	// flags stay 0: no FCGI_KEEP_CONN, the responder closes after the request.
-	if err := writeRecord(bw, typeBeginRequest, begin); err != nil {
+	begin := [8]byte{0, roleResponder}
+	if err := writeRecord(bw, typeBeginRequest, begin[:]); err != nil {
 		return err
 	}
 	if err := writeParams(bw, params); err != nil {
@@ -111,7 +140,9 @@ func sendRequest(w io.Writer, params []Param, stdin io.Reader) error {
 
 func copyStdin(w io.Writer, stdin io.Reader) error {
 	if stdin != nil {
-		buf := make([]byte, maxContent)
+		b := buffers.Get().(*buffer)
+		defer buffers.Put(b)
+		buf := b[:maxContent]
 		for {
 			n, err := io.ReadFull(stdin, buf)
 			if n > 0 {
@@ -131,8 +162,15 @@ func copyStdin(w io.Writer, stdin io.Reader) error {
 }
 
 func readResponse(r io.Reader, stdout, stderr io.Writer) (Result, error) {
-	br := bufio.NewReaderSize(r, 64<<10)
-	var scratch []byte
+	br := readers.Get().(*bufio.Reader)
+	br.Reset(r)
+	defer func() {
+		br.Reset(nil)
+		readers.Put(br)
+	}()
+	b := buffers.Get().(*buffer)
+	defer buffers.Put(b)
+	scratch := b[:0]
 	for {
 		h, content, err := readRecord(br, scratch)
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 const (
@@ -44,17 +45,27 @@ func writeRecord(w io.Writer, typ uint8, content []byte) error {
 		return fmt.Errorf("record content of %d bytes exceeds %d", len(content), maxContent)
 	}
 	pad := (8 - len(content)%8) % 8
-	buf := make([]byte, headerLen, headerLen+len(content)+pad)
-	buf[0] = version1
-	buf[1] = typ
-	binary.BigEndian.PutUint16(buf[2:], requestID)
-	binary.BigEndian.PutUint16(buf[4:], uint16(len(content)))
-	buf[6] = uint8(pad)
-	buf = append(buf, content...)
-	buf = append(buf, make([]byte, pad)...)
-	_, err := w.Write(buf)
+	// Header, content and padding go out as three writes: w is buffered,
+	// and copying the content into one slice first would cost an
+	// allocation per record.
+	h := [headerLen]byte{version1, typ, 0, requestID, byte(len(content) >> 8), byte(len(content)), byte(pad), 0}
+	if _, err := w.Write(h[:]); err != nil {
+		return err
+	}
+	if _, err := w.Write(content); err != nil {
+		return err
+	}
+	_, err := w.Write(zeros[:pad])
 	return err
 }
+
+var zeros [8]byte
+
+// buffer holds one record's content and padding. Pooled buffers keep the
+// per-call cost of the client independent of the record size.
+type buffer [maxContent + 255]byte
+
+var buffers = sync.Pool{New: func() any { return new(buffer) }}
 
 // readRecord reads one record. The content slice is only valid until the next
 // call.
@@ -107,21 +118,22 @@ func appendLength(b []byte, n int) []byte {
 // pair exceeds one record: php-fpm parses each record on its own and drops a
 // pair that spans two, although the specification allows it.
 func writeParams(w io.Writer, params []Param) error {
-	var rec []byte
+	rb := buffers.Get().(*buffer)
+	defer buffers.Put(rb)
+	rec := rb[:0]
 	for _, p := range params {
-		pair := encodePair(p)
-		if len(rec) > 0 && len(rec)+len(pair) > maxContent {
+		if n := pairLen(p); len(rec) > 0 && len(rec)+n > maxContent {
 			if err := writeRecord(w, typeParams, rec); err != nil {
 				return err
 			}
 			rec = rec[:0]
 		}
-		rec = append(rec, pair...)
+		rec = appendPair(rec, p)
 		for len(rec) > maxContent {
 			if err := writeRecord(w, typeParams, rec[:maxContent]); err != nil {
 				return err
 			}
-			rec = rec[maxContent:]
+			rec = append(rec[:0], rec[maxContent:]...)
 		}
 	}
 	if len(rec) > 0 {
@@ -132,8 +144,19 @@ func writeParams(w io.Writer, params []Param) error {
 	return writeRecord(w, typeParams, nil)
 }
 
-func encodePair(p Param) []byte {
-	b := appendLength(nil, len(p.Name))
+func pairLen(p Param) int {
+	n := len(p.Name) + len(p.Value) + 2
+	if len(p.Name) >= 128 {
+		n += 3
+	}
+	if len(p.Value) >= 128 {
+		n += 3
+	}
+	return n
+}
+
+func appendPair(b []byte, p Param) []byte {
+	b = appendLength(b, len(p.Name))
 	b = appendLength(b, len(p.Value))
 	b = append(b, p.Name...)
 	return append(b, p.Value...)

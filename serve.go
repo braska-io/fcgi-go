@@ -155,7 +155,7 @@ func (g *Gateway) roundTrip(ctx context.Context, r *http.Request, cfg *config, i
 		BodyLength:   in.Len(),
 		HasBody:      hasBody(r, in),
 	})
-	res, err := fastcgi.Do(ctx, conn, params, in.Reader(0), &limitWriter{w: out, left: cfg.maxResponse}, stderr)
+	res, err := fastcgi.Do(ctx, conn, params, in.Reader(0), in.Len(), &limitWriter{w: out, left: cfg.maxResponse}, stderr)
 	if errors.Is(err, errTooLarge) {
 		return fail(http.StatusBadGateway, "%w: %d bytes", errTooLarge, cfg.maxResponse)
 	}
