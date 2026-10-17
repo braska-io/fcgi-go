@@ -1,0 +1,400 @@
+# Behaviour that PHP applications rely on when they move from nginx to
+# another FastCGI gateway: header variables, front-controller routing,
+# downloads, status codes, large bodies, and work after the response.
+# Fixtures: fixtures/php/app/compat/*.php.
+cases:
+  # --- Request meta-variables ---------------------------------------------------
+
+  - id: compat-json-http-content-type
+    tier: app
+    source: "php.net $_SERVER (HTTP_* entries hold the request headers); nginx ngx_http_fastcgi_module fastcgi_pass_request_headers"
+    level: OBSERVED
+    summary: >-
+      A JSON POST reaches PHP with CONTENT_TYPE and HTTP_CONTENT_TYPE both
+      application/json; frameworks detect JSON from either one.
+    request:
+      method: POST
+      target: "/app/compat/env.php"
+      headers:
+        - ["Content-Type", "application/json"]
+      body: "{}"
+    expect:
+      status: 200
+      body_contains: "\"content_type\":\"application/json\",\"http_content_type\":\"application/json\""
+
+  - id: compat-http-content-length
+    tier: app
+    source: "php.net $_SERVER (HTTP_* entries hold the request headers); nginx ngx_http_fastcgi_module fastcgi_pass_request_headers"
+    level: OBSERVED
+    summary: A POST reaches PHP with CONTENT_LENGTH and HTTP_CONTENT_LENGTH both set to the body length.
+    request:
+      method: POST
+      target: "/app/compat/env.php"
+      headers:
+        - ["Content-Type", "application/json"]
+      body: "{}"
+      framing: length
+    expect:
+      status: 200
+      body_contains: "\"content_length\":\"2\",\"http_content_length\":\"2\""
+
+  - id: compat-front-controller-raw-request-uri
+    tier: app
+    source: "php.net $_SERVER (REQUEST_URI: the URI which was given in order to access this page)"
+    level: MUST
+    summary: >-
+      A front controller mounted for /api/ sees REQUEST_URI exactly as sent,
+      with %2F still encoded and the double slash kept.
+    request:
+      method: GET
+      target: "/api/a%2Fb//c?x=1"
+    route:
+      script: app/compat/front.php
+    expect:
+      status: 200
+      body: "{\"request_uri\":\"/api/a%2Fb//c?x=1\"}"
+
+  - id: compat-legacy-front-controller-injected-query
+    tier: app
+    source: "php.net $_GET (reserved.variables.get); docs/design.md, WithQuery"
+    level: MUST
+    summary: >-
+      A caller's WithQuery that prepends _url=<path> to the raw query gives
+      the legacy front controller both the route and the client's parameters.
+    request:
+      method: GET
+      target: "/foo/bar?x=1"
+    route:
+      script: app/compat/legacy.php
+      query_string: "_url=/foo/bar&x=1"
+    expect:
+      status: 200
+      body: "{\"get\":{\"_url\":\"/foo/bar\",\"x\":\"1\"}}"
+
+  - id: compat-entry-point-script-vars
+    tier: app
+    source: "php.net $_SERVER (SCRIPT_NAME, SCRIPT_FILENAME, DOCUMENT_ROOT); docs/design.md, WithDocumentRoot"
+    level: MUST
+    summary: >-
+      SCRIPT_NAME is /<script>, and SCRIPT_FILENAME starts with DOCUMENT_ROOT,
+      ends with /<script>, and names the running file.
+    request:
+      method: GET
+      target: "/app/compat/entry.php"
+    expect:
+      status: 200
+      body: "{\"script_name\":\"/app/compat/entry.php\",\"filename_ends_with_script\":true,\"filename_starts_with_document_root\":true,\"filename_is_this_file\":true}"
+
+  - id: compat-entry-point-script-vars-front-controller
+    tier: app
+    source: "php.net $_SERVER (SCRIPT_NAME: the current script's path); nginx fastcgi_params ($fastcgi_script_name)"
+    level: OBSERVED
+    summary: >-
+      Behind a front-controller route whose path does not name the script,
+      SCRIPT_NAME is still /<script> and SCRIPT_FILENAME points at the script.
+    request:
+      method: GET
+      target: "/api/users/7"
+    route:
+      script: app/compat/entry.php
+    expect:
+      status: 200
+      body: "{\"script_name\":\"/app/compat/entry.php\",\"filename_ends_with_script\":true,\"filename_starts_with_document_root\":true,\"filename_is_this_file\":true}"
+
+  - id: compat-x-forwarded-proto-passed
+    tier: app
+    source: "php.net $_SERVER (HTTP_* entries); RFC 3875 section 4.1.18"
+    level: MUST
+    summary: X-Forwarded-Proto from the client reaches PHP as HTTP_X_FORWARDED_PROTO.
+    request:
+      method: GET
+      target: "/app/compat/proto.php"
+      headers:
+        - ["X-Forwarded-Proto", "http"]
+    expect:
+      status: 200
+      body_contains: "\"x_forwarded_proto\":\"http\""
+
+  - id: compat-https-from-gateway-tls
+    tier: app
+    source: "php.net $_SERVER (HTTPS: set to a non-empty value if the script was queried through the HTTPS protocol)"
+    level: MUST
+    summary: >-
+      The suite serves over TLS, so HTTPS is non-empty and not "off", whatever
+      X-Forwarded-Proto the client sends.
+    request:
+      method: GET
+      target: "/app/compat/proto.php"
+      headers:
+        - ["X-Forwarded-Proto", "http"]
+    expect:
+      status: 200
+      body_contains: "\"https\":true"
+
+  # --- Request bodies -----------------------------------------------------------
+
+  - id: compat-chunked-json-1mib-lengths
+    tier: app
+    source: "php.net Wrappers, php://input; docs/design.md (CONTENT_LENGTH is always exact, also for chunked bodies)"
+    level: MUST
+    summary: >-
+      A chunked 1 MiB JSON POST reaches PHP with CONTENT_LENGTH 1048576 and
+      1048576 bytes in php://input.
+    request:
+      method: POST
+      target: "/app/compat/input.php"
+      headers:
+        - ["Content-Type", "application/json"]
+      body_size: 1048576
+      framing: chunked
+    expect:
+      status: 200
+      body: "{\"content_type\":\"application/json\",\"content_length\":\"1048576\",\"input_length\":1048576}"
+
+  - id: compat-upload-between-post-max-size-and-gateway-limit
+    tier: app
+    source: "php.net ini.core, post_max_size; docs/design.md, WithMaxBody (10 MiB)"
+    level: MUST
+    summary: >-
+      A 9 MiB multipart body, above post_max_size (8M) and below the gateway
+      limit, reaches PHP instead of a gateway 413; PHP leaves $_POST and
+      $_FILES empty.
+    request:
+      method: POST
+      target: "/app/compat/upload.php"
+      headers:
+        - ["Content-Type", "multipart/form-data; boundary=XyZ"]
+      body_size: 9437184
+      framing: length
+    expect:
+      status: 200
+      body: "{\"content_length\":\"9437184\",\"post\":{},\"files\":{}}"
+
+  - id: compat-upload-between-post-max-size-and-gateway-limit-chunked
+    tier: app
+    source: "php.net ini.core, post_max_size; docs/design.md, WithMaxBody (10 MiB)"
+    level: MUST
+    summary: The same 9 MiB multipart body sent chunked also reaches PHP with its exact CONTENT_LENGTH.
+    request:
+      method: POST
+      target: "/app/compat/upload.php"
+      headers:
+        - ["Content-Type", "multipart/form-data; boundary=XyZ"]
+      body_size: 9437184
+      framing: chunked
+    expect:
+      status: 200
+      body: "{\"content_length\":\"9437184\",\"post\":{},\"files\":{}}"
+
+  # --- Downloads ------------------------------------------------------------------
+
+  - id: compat-download-utf8-filename
+    tier: app
+    source: "RFC 9110 section 5.5 (a recipient SHOULD treat obs-text in field content as opaque data); php.net header()"
+    level: SHOULD
+    summary: >-
+      A Content-Disposition filename in raw UTF-8 reaches the client byte for
+      byte.
+    request:
+      method: GET
+      target: "/app/compat/download.php?case=utf8"
+    expect:
+      status: 200
+      headers:
+        Content-Type: application/pdf
+        Content-Disposition: 'attachment; filename="Prüfbericht_ä.pdf"'
+      body: "%PDF-1.4\n"
+
+  - id: compat-download-short-content-length-502
+    tier: gateway
+    source: "RFC 9110 section 8.6 (a sender MUST NOT forward a message with a Content-Length header field value that is known to be incorrect); docs/design.md, a cancelled or failed call (not listed as a 502 cause)"
+    level: SHOULD
+    summary: >-
+      PHP declares Content-Length 1000, sends 10 bytes and exits; the gateway
+      answers 502 instead of passing on a response it knows is inconsistent.
+    request:
+      method: GET
+      target: "/app/compat/download.php?case=short"
+    expect:
+      status: 502
+      reaches_responder: false
+
+  - id: compat-download-3mib-content-length
+    tier: app
+    source: "php.net readfile() (example #1 sends Content-Length and clears the output buffers)"
+    level: OBSERVED
+    summary: >-
+      A 3 MiB binary download with an exact Content-Length, written after
+      clearing every output buffer, arrives complete, with that Content-Length
+      and without Content-Encoding.
+    request:
+      method: GET
+      target: "/app/compat/download.php?case=big"
+    expect:
+      status: 200
+      headers:
+        Content-Type: application/octet-stream
+        Content-Length: "3145728"
+      headers_absent: [Content-Encoding]
+      body_length: 3145728
+      body_sha256: "f6dd7fec8584ad00219a447071c1fa368a1caee4d9c146083d233713ddccd2c0"
+
+  - id: compat-download-range-not-fabricated
+    tier: gateway
+    source: "docs/design.md, the responder's output becomes the HTTP response (without Status: the status is 200); RFC 9110 section 14.2 (a server MAY ignore the Range header field)"
+    level: MUST
+    summary: >-
+      A Range request to a script that ignores Range gets the script's 200 and
+      full body; the gateway does not turn it into a 206.
+    request:
+      method: GET
+      target: "/app/compat/download.php?case=plain"
+      headers:
+        - ["Range", "bytes=0-9"]
+    expect:
+      status: 200
+      headers_absent: [Content-Range]
+      body: "0123456789abcdefghijklmnopqrstuvwxyz"
+
+  # --- Response headers -----------------------------------------------------------
+
+  - id: compat-duplicate-cache-control
+    tier: app
+    source: "php.net header() (replace=false forces multiple headers of the same type); RFC 9110 section 5.3"
+    level: MUST
+    summary: Two Cache-Control fields from header(..., false) arrive as two fields, in order.
+    request:
+      method: GET
+      target: "/app/compat/headers.php?case=dup"
+    expect:
+      status: 200
+      headers_all: { Cache-Control: ["no-store", "no-cache"] }
+
+  - id: compat-three-set-cookie
+    tier: app
+    source: "php.net header() (replace=false); RFC 9110 section 5.3 (Set-Cookie is a special case and is not combined)"
+    level: MUST
+    summary: Three Set-Cookie fields arrive as three separate fields, in order.
+    request:
+      method: GET
+      target: "/app/compat/headers.php?case=dup"
+    expect:
+      status: 200
+      headers_all: { Set-Cookie: ["a=1", "b=2", "c=3"] }
+
+  - id: compat-content-type-leading-whitespace-trimmed
+    tier: app
+    source: "RFC 9110 section 5.5 (a field value does not include leading or trailing whitespace); php.net header()"
+    level: MUST
+    summary: >-
+      PHP passes "Content-Type:  text/plain; charset=utf-8" with two spaces
+      unchanged; the client sees the value without the leading whitespace.
+    request:
+      method: GET
+      target: "/app/compat/headers.php?case=dup"
+    expect:
+      status: 200
+      headers: { Content-Type: "text/plain; charset=utf-8" }
+      body: "dup"
+
+  # --- Status codes -----------------------------------------------------------------
+
+  - id: compat-status-protocol-line-trailing-space
+    tier: app
+    source: "php.net header() (headers starting with HTTP/ set the status code)"
+    level: MUST
+    summary: header('HTTP/1.0 406 Not Acceptable ') with a trailing space, then exit, answers 406.
+    request:
+      method: GET
+      target: "/app/compat/status.php?case=protocol"
+    expect:
+      status: 406
+      body_length: 0
+
+  - id: compat-status-401-empty-body
+    tier: app
+    source: "php.net http_response_code()"
+    level: MUST
+    summary: http_response_code(401) with no output answers 401 with an empty body.
+    request:
+      method: GET
+      target: "/app/compat/status.php?case=code"
+    expect:
+      status: 401
+      body_length: 0
+
+  - id: compat-status-location-only-302
+    tier: app
+    source: "php.net header() (Location: returns a REDIRECT (302) status code); docs/design.md (a Location with an absolute URI and no Status: gives 302)"
+    level: MUST
+    summary: An absolute Location and nothing else answers 302 with that Location.
+    request:
+      method: GET
+      target: "/app/compat/status.php?case=location"
+    expect:
+      status: 302
+      headers: { Location: "https://example.test/next" }
+
+  # --- Errors and progress output ---------------------------------------------------
+
+  - id: compat-fatal-error-500-no-error-text
+    tier: app
+    source: "php.net errorfunc.configuration (display_errors); php-src main/main.c php_error_cb (500 when headers are not sent)"
+    level: OBSERVED
+    summary: >-
+      A fatal error before any output answers 500 with an empty body under
+      display_errors=off; the message goes to stderr only.
+    request:
+      method: GET
+      target: "/app/compat/fatal.php"
+    expect:
+      status: 500
+      body_length: 0
+
+  - id: compat-progress-output-complete
+    tier: app
+    source: "php.net flush(); php.net ob_flush(); docs/design.md (the responder's output is read completely before the client receives a byte)"
+    level: OBSERVED
+    summary: >-
+      Three lines pushed out with ob_flush() and flush() 300 ms apart arrive
+      as one complete body after the script ends.
+    request:
+      method: GET
+      target: "/app/compat/progress.php"
+    expect:
+      status: 200
+      body: "step 1\nstep 2\nstep 3\n"
+      duration_min_ms: 600
+
+scenarios:
+  - id: compat-shutdown-after-flush-runs
+    tier: app
+    source: "php.net register_shutdown_function; php.net flush()"
+    level: MUST
+    summary: >-
+      A script that flushes "ok", sleeps one second and ends runs its shutdown
+      function; the next request sees the marker.
+    steps:
+      - request: { method: POST, target: "/app/compat/state.php?op=reset&k=compat-flush" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/compat/disconnect.php?k=compat-flush&sleep_ms=1000" }
+        expect: { status: 200, body: "ok", duration_min_ms: 1000 }
+      - request: { method: GET, target: "/app/compat/state.php?op=read&k=compat-flush" }
+        expect: { status: 200, body: "shutdown" }
+
+  - id: compat-shutdown-after-gateway-timeout-runs
+    tier: app
+    source: "php.net Connection handling (on a remote disconnect, shutdown functions are still called); php.net register_shutdown_function; docs/design.md (a call that reaches its deadline answers 504 and closes its connection)"
+    level: MUST
+    summary: >-
+      The gateway times out while the script sleeps after flushing "ok"; the
+      client gets 504, and the script's shutdown function still runs.
+    steps:
+      - request: { method: POST, target: "/app/compat/state.php?op=reset&k=compat-timeout" }
+        expect: { status: 200, body: "reset" }
+      - request: { method: GET, target: "/app/compat/disconnect.php?k=compat-timeout&sleep_ms=1000" }
+        route: { timeout_ms: 300 }
+        expect: { status: 504, reaches_responder: false, duration_max_ms: 1200 }
+      - wait_ms: 2000
+      - request: { method: GET, target: "/app/compat/state.php?op=read&k=compat-timeout" }
+        expect: { status: 200, body: "shutdown" }
