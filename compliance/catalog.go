@@ -21,8 +21,7 @@ var catalogFS embed.FS
 // Transport is the HTTP version a case is sent with.
 type Transport string
 
-// The transports the schema knows. H3 runs are pending until the library
-// adds HTTP/3.
+// The transports the schema knows.
 const (
 	H1 Transport = "h1"
 	H2 Transport = "h2"
