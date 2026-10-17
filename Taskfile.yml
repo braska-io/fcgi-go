@@ -6,6 +6,11 @@ tasks:
     cmds:
       - go test ./... {{.CLI_ARGS}}
 
+  bench:micro:
+    desc: Run the library's in-process benchmarks
+    cmds:
+      - go test -run '^$' -bench . -benchmem {{.CLI_ARGS}} .
+
   lint:
     desc: Vet both modules
     cmds:

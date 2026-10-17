@@ -48,14 +48,16 @@ func main() {
 		only     = flag.String("only", "", "comma-separated workload names to run; empty runs all")
 		out      = flag.String("out", "README.md", "README whose results block is replaced")
 		rev      = flag.String("rev", "", "fcgi-go revision for the report")
+		cpuprof  = flag.String("cpuprofile", "", "write the gateway's CPU profile over the whole run to this file")
+		maxConns = flag.Int("max-conns", 64, "the gateway's WithMaxConns")
 	)
 	flag.Parse()
-	if err := run(*duration, *warmup, *only, *out, *rev); err != nil {
+	if err := run(*duration, *warmup, *only, *out, *rev, *cpuprof, *maxConns); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(duration, warmup time.Duration, only, out, rev string) error {
+func run(duration, warmup time.Duration, only, out, rev, cpuprof string, maxConns int) error {
 	ctx := context.Background()
 	repo, err := filepath.Abs("..")
 	if err != nil {
@@ -96,13 +98,18 @@ func run(duration, warmup time.Duration, only, out, rev string) error {
 	}
 
 	log.Print("building and starting the fcgi-go gateway")
-	gw, err := testcontainers.Run(ctx, "",
+	gwOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{Context: repo, Dockerfile: "benchmarks/gateway/Dockerfile"}),
 		testcontainers.WithExposedPorts("8080/tcp"),
 		network.WithNetwork([]string{"gateway"}, nw),
 		testcontainers.WithHostConfigModifier(cpus(proxyCPUs)),
 		testcontainers.WithWaitStrategy(wait.ForListeningPort("8080/tcp")),
-	)
+		testcontainers.WithEnv(map[string]string{"MAX_CONNS": strconv.Itoa(maxConns)}),
+	}
+	if cpuprof != "" {
+		gwOpts = append(gwOpts, testcontainers.WithEnv(map[string]string{"CPU_PROFILE": "/tmp/cpu.pprof"}))
+	}
+	gw, err := testcontainers.Run(ctx, "", gwOpts...)
 	defer terminate(gw)
 	if err != nil {
 		return fmt.Errorf("gateway: %w", err)
@@ -147,11 +154,41 @@ func run(duration, warmup time.Duration, only, out, rev string) error {
 		}
 	}
 
+	if cpuprof != "" {
+		if err := copyProfile(ctx, gw, cpuprof); err != nil {
+			return err
+		}
+	}
+
 	env, err := environment(ctx, docker, rev, duration, warmup)
 	if err != nil {
 		return err
 	}
 	return writeReport(out, env, results)
+}
+
+// copyProfile stops the gateway, which makes it write its profile, and
+// copies the profile out of the stopped container.
+func copyProfile(ctx context.Context, gw *testcontainers.DockerContainer, path string) error {
+	timeout := 10 * time.Second
+	if err := gw.Stop(ctx, &timeout); err != nil {
+		return fmt.Errorf("stop gateway: %w", err)
+	}
+	rc, err := gw.CopyFileFromContainer(ctx, "/tmp/cpu.pprof")
+	if err != nil {
+		return fmt.Errorf("copy profile: %w", err)
+	}
+	defer rc.Close()
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, rc); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write profile: %w", err)
+	}
+	log.Printf("gateway CPU profile: %s", path)
+	return f.Close()
 }
 
 func cpus(n int64) func(*container.HostConfig) {
@@ -179,7 +216,7 @@ type workload struct {
 	// scale multiplies the cell duration, so cells whose requests take
 	// seconds still complete many of them.
 	scale int
-	next    func(base string, rnd *rand.Rand) (*http.Request, error)
+	next  func(base string, rnd *rand.Rand) (*http.Request, error)
 	// check sees the first bytes of the response body and its full length.
 	check func(head []byte, n int64) error
 }
