@@ -1,9 +1,7 @@
 # Contributing to fcgi-go
 
-fcgi-go has a public API and a compliance suite, but no implementation yet.
-Every handler answers `501 Not Implemented` today.
-Contributions to the implementation, the suite, and the reference responders are welcome.
-The [README](README.md) explains the terms used here: responder, fixture, and case.
+Contributions to the library, the compliance suite, and the reference responders are welcome.
+[compliance/README.md](compliance/README.md) explains the terms used here: responder, fixture, and case.
 
 ## Discuss larger changes first
 
