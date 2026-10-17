@@ -561,8 +561,7 @@ cases:
     summary: >-
       A connection field makes an h2/h3 request malformed and it MUST NOT be
       forwarded. The server MAY answer before resetting the stream (RFC 9113
-      8.1.1, RFC 9114 4.1.2); a reset alone is also conformant and cannot be
-      expressed here, so the case expects the 400 variant.
+      8.1.1, RFC 9114 4.1.2); a reset alone is also conformant.
     transports: [h2, h3]
     request:
       method: GET
@@ -572,6 +571,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   - id: http-h2-keep-alive-malformed
     tier: spec
@@ -579,7 +579,7 @@ cases:
     level: MUST
     summary: >-
       A keep-alive field makes an h2/h3 request malformed; the responder
-      never runs. 400 is the response variant of the stream error.
+      never runs. The outcome is a 400 or a reset stream.
     transports: [h2, h3]
     request:
       method: GET
@@ -589,6 +589,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   - id: http-h2-proxy-connection-malformed
     tier: spec
@@ -596,7 +597,7 @@ cases:
     level: MUST
     summary: >-
       A proxy-connection field makes an h2/h3 request malformed; the
-      responder never runs. 400 is the response variant of the stream error.
+      responder never runs. The outcome is a 400 or a reset stream.
     transports: [h2, h3]
     request:
       method: GET
@@ -606,6 +607,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   - id: http-h2-transfer-encoding-malformed
     tier: spec
@@ -613,7 +615,7 @@ cases:
     level: MUST
     summary: >-
       A transfer-encoding field makes an h2/h3 request malformed; the
-      responder never runs. 400 is the response variant of the stream error.
+      responder never runs. The outcome is a 400 or a reset stream.
     transports: [h2, h3]
     request:
       method: POST
@@ -625,6 +627,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   - id: http-h2-upgrade-malformed
     tier: spec
@@ -632,7 +635,7 @@ cases:
     level: MUST
     summary: >-
       An upgrade field makes an h2/h3 request malformed; the responder never
-      runs. 400 is the response variant of the stream error.
+      runs. The outcome is a 400 or a reset stream.
     transports: [h2, h3]
     request:
       method: GET
@@ -642,6 +645,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   - id: http-h2-te-other-than-trailers-malformed
     tier: spec
@@ -650,7 +654,7 @@ cases:
     summary: >-
       TE in an h2/h3 request MUST NOT contain any value other than
       "trailers"; te: gzip makes the request malformed and the responder
-      never runs. 400 is the response variant of the stream error.
+      never runs. The outcome is a 400 or a reset stream.
     transports: [h2, h3]
     request:
       method: GET
@@ -660,6 +664,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   # --- Other h2/h3 malformed requests ---
 
@@ -670,7 +675,7 @@ cases:
     summary: >-
       An uppercase character in an h2/h3 field name makes the request
       malformed, unlike h1 where case is free; the responder never runs.
-      400 is the response variant of the stream error.
+      The outcome is a 400 or a reset stream.
     waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h2, h3]
     request:
@@ -681,6 +686,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   - id: http-h2-field-name-with-space-malformed
     tier: spec
@@ -688,7 +694,7 @@ cases:
     level: MUST
     summary: >-
       A field name containing 0x20 makes an h2 request malformed; the
-      responder never runs. 400 is the response variant of the stream error.
+      responder never runs. The outcome is a 400 or a reset stream.
     waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h2]
     request:
@@ -699,6 +705,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   - id: http-h2-field-value-with-lf-malformed
     tier: spec
@@ -706,7 +713,7 @@ cases:
     level: MUST
     summary: >-
       A field value containing LF makes an h2 request malformed; the
-      responder never runs. 400 is the response variant of the stream error.
+      responder never runs. The outcome is a 400 or a reset stream.
     waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h2]
     request:
@@ -717,6 +724,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   - id: http-h2-undefined-pseudo-header-malformed
     tier: spec
@@ -724,7 +732,7 @@ cases:
     level: MUST
     summary: >-
       An undefined pseudo-header field makes an h2 request malformed; the
-      responder never runs. 400 is the response variant of the stream error.
+      responder never runs. The outcome is a 400 or a reset stream.
     waived: "Go net/http decides this before any handler runs, so no gateway built on it can change the outcome."
     transports: [h2]
     request:
@@ -735,6 +743,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   - id: http-h2-content-length-mismatch-malformed
     tier: spec
@@ -743,7 +752,7 @@ cases:
     summary: >-
       A content-length that differs from the summed DATA payload makes an
       h2/h3 request malformed; an intermediary MUST NOT forward it, so the
-      responder never runs. 400 is the response variant of the stream error.
+      responder never runs. The outcome is a 400 or a reset stream.
     transports: [h2, h3]
     request:
       method: POST
@@ -755,6 +764,7 @@ cases:
     expect:
       reaches_responder: false
       status_in: [400]
+      or_reset: true
 
   # --- Message body and CONTENT_LENGTH ---
 

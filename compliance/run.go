@@ -440,10 +440,11 @@ func (e *Expect) Check(o *Observation) []string {
 	if reached != want {
 		fail("reaches_responder: want %t, got %t (status %d, body %q)", want, reached, o.Status, clip(o.Body))
 	}
-	if e.Status != 0 && o.Status != e.Status {
+	reset := e.OrReset && o.Status == 0 && o.Header.Get("X-Compliance-Reset") != ""
+	if e.Status != 0 && o.Status != e.Status && !reset {
 		fail("status: want %d, got %d (body %q)", e.Status, o.Status, clip(o.Body))
 	}
-	if len(e.StatusIn) > 0 && !containsInt(e.StatusIn, o.Status) {
+	if len(e.StatusIn) > 0 && !containsInt(e.StatusIn, o.Status) && !reset {
 		fail("status: want one of %v, got %d", e.StatusIn, o.Status)
 	}
 	f = append(f, e.checkEnv(o)...)

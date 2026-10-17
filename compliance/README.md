@@ -61,6 +61,7 @@ cases:
       reaches_responder: true               # default true; false = the gateway or server answers itself
       status: 200                           # exact status, or:
       status_in: [400, 431]
+      or_reset: true                        # a reset stream without a response also passes (malformed h2/h3)
       env: { REQUEST_METHOD: POST }         # exact meta-variable values
       env_match: { SERVER_PROTOCOL: "^HTTP/1\\.1$" }  # Go regular expressions
       env_absent: [HTTP_PROXY]              # meta-variables that must not exist
