@@ -13,10 +13,18 @@ services:
   cpp:
     restart: always
     build: compliance/fixtures/cpp
+    # A crash fixture kills the responder process. The loop restarts it at
+    # once, so the kernel closes its sockets now instead of when the
+    # container stops.
+    entrypoint: ["sh", "-c", "while true; do /usr/local/bin/responder; done"]
     environment: { FIXTURE_STATE: /state }
     ports: ["127.0.0.1:9003:9000"]
   rust:
     restart: always
     build: compliance/fixtures/rust
+    # A crash fixture kills the responder process. The loop restarts it at
+    # once, so the kernel closes its sockets now instead of when the
+    # container stops.
+    entrypoint: ["sh", "-c", "while true; do /usr/local/bin/responder; done"]
     environment: { FIXTURE_STATE: /state }
     ports: ["127.0.0.1:9004:9000"]

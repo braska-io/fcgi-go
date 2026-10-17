@@ -17,6 +17,8 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <poll.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -220,6 +222,21 @@ static int put(FCGX_Request *r, const void *b, size_t n)
 static int puts_(FCGX_Request *r, const char *s)
 {
 	return put(r, s, strlen(s));
+}
+
+/* peer_closed reports whether the gateway closed the connection. The first
+ * write after the peer's FIN still succeeds, so a successful flush alone
+ * does not prove the client is there; after the request's empty STDIN the
+ * gateway sends nothing, so a readable socket with no data means EOF. */
+static int peer_closed(FCGX_Request *r)
+{
+	struct pollfd p = { .fd = r->ipcFd, .events = POLLIN };
+	char c;
+	if (poll(&p, 1, 0) <= 0)
+		return 0;
+	if (p.revents & (POLLHUP | POLLERR))
+		return 1;
+	return recv(r->ipcFd, &c, 1, MSG_PEEK | MSG_DONTWAIT) == 0;
 }
 
 static int flush(FCGX_Request *r)
@@ -566,7 +583,7 @@ static void fx_txn(FCGX_Request *r, const query_t *q)
 		head(r, "txn", plain);
 		bad |= puts_(r, "inserted");
 		bad |= flush(r);
-		if (FCGX_HasSeenEOF(r->out))
+		if (FCGX_HasSeenEOF(r->out) || peer_closed(r))
 			bad = -1;
 		db_exec(db, bad ? "ROLLBACK" : "COMMIT");
 	} else if (strcmp(o, "insert_commit_crash") == 0 || strcmp(o, "insert_crash") == 0) {
