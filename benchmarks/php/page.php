@@ -1,5 +1,6 @@
 <?php
-// A typical application page: a session, one simulated database round trip,
+// A typical application page for a signed-in user: the session the client's
+// cookie names, one simulated database round trip,
 // some data shaping and a rendered HTML response of about 60 KiB.
 session_start();
 $_SESSION['views'] = ($_SESSION['views'] ?? 0) + 1;

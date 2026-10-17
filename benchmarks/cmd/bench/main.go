@@ -19,6 +19,7 @@ import (
 	"math/rand/v2"
 	"mime/multipart"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -134,14 +135,23 @@ func run(duration, warmup time.Duration, only, out, rev, cpuprof string, maxConn
 	}
 
 	var results []result
+	cell := 0
 	for _, w := range workloads() {
 		if only != "" && !slices.Contains(strings.Split(only, ","), w.name) {
 			continue
 		}
 		for _, c := range w.loads {
-			// Alternating the proxies per cell spreads drift in the host
-			// over both instead of favouring whichever runs first.
-			for _, p := range proxies {
+			// The proxy that goes first alternates per cell. Whatever the
+			// first run leaves behind in php-fpm, such as session files,
+			// then burdens both proxies alike.
+			order := []int{0, 1}
+			if cell%2 == 1 {
+				order = []int{1, 0}
+			}
+			cell++
+			pair := make([]result, len(proxies))
+			for _, i := range order {
+				p := proxies[i]
 				log.Printf("%s c=%d %s", w.name, c, p.name)
 				d := duration * time.Duration(max(w.scale, 1))
 				_ = load(ctx, p.base, w, c, warmup)
@@ -149,8 +159,9 @@ func run(duration, warmup time.Duration, only, out, rev, cpuprof string, maxConn
 				if err != nil {
 					return fmt.Errorf("%s c=%d %s: %w", w.name, c, p.name, err)
 				}
-				results = append(results, r)
+				pair[i] = r
 			}
+			results = append(results, pair...)
 		}
 	}
 
@@ -307,7 +318,8 @@ type result struct {
 	summary  string
 	load     int
 	proxy    string
-	requests int
+	requests int // completed, stragglers included
+	inWindow int // completed within the measured window
 	errors   int
 	firstErr string
 	elapsed  time.Duration
@@ -318,7 +330,7 @@ type result struct {
 	window   time.Duration
 }
 
-func (r result) rps() float64 { return float64(r.requests) / r.elapsed.Seconds() }
+func (r result) rps() float64 { return float64(r.inWindow) / r.elapsed.Seconds() }
 
 func (r result) pct(p float64) time.Duration {
 	if len(r.lat) == 0 {
@@ -342,6 +354,9 @@ func measure(ctx context.Context, docker *client.Client, p *proxy, w workload, c
 		return r, s.err
 	}
 	r.proxy, r.cpu, r.peakMem, r.window = p.name, s.cpu, s.peakMem, d
+	// CFS throttling stalls every thread of the container; it explains tail
+	// latency that the proxy's own code does not.
+	log.Printf("  %s: %.0f req/s, throttled %s", p.name, r.rps(), s.throttled)
 	return r, nil
 }
 
@@ -349,13 +364,14 @@ func measure(ctx context.Context, docker *client.Client, p *proxy, w workload, c
 func load(ctx context.Context, base string, w workload, c int, d time.Duration) result {
 	tr := &http.Transport{MaxConnsPerHost: c, MaxIdleConnsPerHost: c, DisableCompression: true}
 	defer tr.CloseIdleConnections()
-	hc := &http.Client{Transport: tr, Timeout: 150 * time.Second}
 
 	var (
 		mu       sync.Mutex
 		lat      []time.Duration
 		errs     atomic.Int64
 		total    atomic.Int64
+		inWindow atomic.Int64
+		winBytes atomic.Int64
 		firstErr atomic.Value
 		wg       sync.WaitGroup
 	)
@@ -363,6 +379,10 @@ func load(ctx context.Context, base string, w workload, c int, d time.Duration) 
 	start := time.Now()
 	for i := range c {
 		wg.Go(func() {
+			// Each client keeps its cookies like a browser, so a session
+			// lives as long as the client instead of one per request.
+			jar, _ := cookiejar.New(nil) // a nil option set cannot fail
+			hc := &http.Client{Transport: tr, Jar: jar, Timeout: 150 * time.Second}
 			rnd := rand.New(rand.NewPCG(uint64(i), 1)) //nolint:gosec // workload mix, not security
 			var mine []time.Duration
 			for time.Now().Before(deadline) && ctx.Err() == nil {
@@ -374,6 +394,10 @@ func load(ctx context.Context, base string, w workload, c int, d time.Duration) 
 					continue
 				}
 				total.Add(n)
+				if done := time.Now(); !done.After(deadline) {
+					inWindow.Add(1)
+					winBytes.Add(n)
+				}
 				mine = append(mine, time.Since(t0))
 			}
 			mu.Lock()
@@ -384,10 +408,13 @@ func load(ctx context.Context, base string, w workload, c int, d time.Duration) 
 	wg.Wait()
 	slices.Sort(lat)
 	fe, _ := firstErr.Load().(string)
+	// Throughput counts what completed within the window. A straggler that
+	// finishes long after it would otherwise stretch the window and hide in
+	// a lower rate; it shows in the max latency instead.
 	return result{
 		workload: w.name, summary: w.summary, load: c,
-		requests: len(lat), errors: int(errs.Load()), firstErr: fe,
-		elapsed: time.Since(start), bytes: total.Load(), lat: lat,
+		requests: len(lat), inWindow: int(inWindow.Load()), errors: int(errs.Load()), firstErr: fe,
+		elapsed: min(time.Since(start), d), bytes: winBytes.Load(), lat: lat,
 	}
 }
 
@@ -429,9 +456,10 @@ func (h *headWriter) Write(p []byte) (int, error) {
 }
 
 type sample struct {
-	cpu     time.Duration
-	peakMem uint64
-	err     error
+	cpu       time.Duration
+	throttled time.Duration
+	peakMem   uint64
+	err       error
 }
 
 // sampleStats streams docker stats until ctx ends. CPU is the difference
@@ -444,7 +472,7 @@ func sampleStats(ctx context.Context, docker *client.Client, id string) sample {
 	}
 	defer res.Body.Close()
 	dec := json.NewDecoder(res.Body)
-	var first, last uint64
+	var first, last, firstThr, lastThr uint64
 	var s sample
 	for {
 		var st container.StatsResponse
@@ -456,11 +484,14 @@ func sampleStats(ctx context.Context, docker *client.Client, id string) sample {
 		}
 		if first == 0 {
 			first = st.CPUStats.CPUUsage.TotalUsage
+			firstThr = st.CPUStats.ThrottlingData.ThrottledTime
 		}
 		last = st.CPUStats.CPUUsage.TotalUsage
+		lastThr = st.CPUStats.ThrottlingData.ThrottledTime
 		s.peakMem = max(s.peakMem, st.MemoryStats.Usage-st.MemoryStats.Stats["inactive_file"])
 	}
-	s.cpu = time.Duration(last - first) //nolint:gosec // nanoseconds of CPU time
+	s.cpu = time.Duration(last - first)             //nolint:gosec // nanoseconds of CPU time
+	s.throttled = time.Duration(lastThr - firstThr) //nolint:gosec // nanoseconds throttled
 	return s
 }
 
