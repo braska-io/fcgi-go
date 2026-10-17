@@ -1,10 +1,9 @@
 /*
  * C reference FastCGI responder for the compliance suite (RESPONDERS.md).
  *
- * Process model: one process, NUM_WORKERS (4) threads, each looping on
- * FCGX_Accept_r over a shared listening socket. The crash, fatal and
- * *_crash fixtures therefore take the whole process down; run the container
- * with `restart: always` in compose so Docker brings it back.
+ * Process model: a supervisor binds the port and forks the server, which
+ * runs NUM_WORKERS (4) threads looping on FCGX_Accept_r. The crash, fatal
+ * and *_crash fixtures kill the server; the supervisor forks a new one.
  */
 #define _GNU_SOURCE
 #include <fcgiapp.h>
@@ -653,41 +652,47 @@ static void *worker(void *arg)
 	return NULL;
 }
 
+static volatile sig_atomic_t stopping;
 static pid_t child;
 
 static void forward(int sig)
 {
+	stopping = 1;
 	if (child > 0)
 		kill(child, sig);
 }
 
 /*
- * As PID 1 the kernel discards SEGV/ABRT/KILL raised from inside the
- * container, so the crash fixtures would not kill anything. Run the server
- * in a child and exit when it dies; the container stops and compose restarts it.
+ * The supervisor owns the listening socket, so it stays open while a crashed
+ * server is replaced: a connection in that gap waits in the backlog instead
+ * of being refused. The server also never runs as PID 1, where the kernel
+ * would discard the signals the crash fixtures raise.
  */
-static void supervise_if_pid1(void)
+static void supervise(void)
 {
-	if (getpid() != 1)
-		return;
-	child = fork();
-	if (child < 0) {
-		perror("fork");
-		exit(1);
-	}
-	if (child == 0)
-		return;
 	signal(SIGTERM, forward);
 	signal(SIGINT, forward);
-	int status;
-	while (waitpid(child, &status, 0) < 0)
-		;
-	_exit(WIFSIGNALED(status) ? 128 + WTERMSIG(status) : WEXITSTATUS(status));
+	for (;;) {
+		child = fork();
+		if (child < 0) {
+			perror("fork");
+			exit(1);
+		}
+		if (child == 0) {
+			signal(SIGTERM, SIG_DFL);
+			signal(SIGINT, SIG_DFL);
+			return;
+		}
+		int status;
+		while (waitpid(child, &status, 0) < 0)
+			;
+		if (stopping)
+			exit(0);
+	}
 }
 
 int main(void)
 {
-	supervise_if_pid1();
 	signal(SIGPIPE, SIG_IGN); /* a lost client must surface as a failed write, not a dead process */
 	if (FCGX_Init() != 0) {
 		fprintf(stderr, "fcgx init failed\n");
@@ -698,6 +703,7 @@ int main(void)
 		fprintf(stderr, "listen on :9000 failed\n");
 		return 1;
 	}
+	supervise();
 	pthread_t t[NUM_WORKERS];
 	for (int i = 0; i < NUM_WORKERS; i++)
 		pthread_create(&t[i], NULL, worker, NULL);

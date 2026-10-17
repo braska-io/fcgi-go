@@ -568,14 +568,63 @@ async fn serve(stream: TcpStream, sem: Arc<Semaphore>) {
     }
 }
 
+static STOPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SERVER: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+extern "C" fn forward(sig: libc::c_int) {
+    use std::sync::atomic::Ordering;
+    STOPPING.store(true, Ordering::SeqCst);
+    let pid = SERVER.load(Ordering::SeqCst);
+    if pid > 0 {
+        unsafe { libc::kill(pid, sig) };
+    }
+}
+
+/// The supervisor owns the listening socket, so it stays open while a
+/// crashed server is replaced: a connection in that gap waits in the backlog
+/// instead of being refused. The server also never runs as PID 1, where the
+/// kernel would discard the signals the crash fixtures raise. It forks before
+/// the tokio runtime exists, because a forked runtime is unusable.
+fn supervise() {
+    use std::sync::atomic::Ordering;
+    let handler = forward as extern "C" fn(libc::c_int) as libc::sighandler_t;
+    unsafe {
+        libc::signal(libc::SIGTERM, handler);
+        libc::signal(libc::SIGINT, handler);
+    }
+    loop {
+        let pid = unsafe { libc::fork() };
+        if pid < 0 {
+            eprintln!("fork: {}", io::Error::last_os_error());
+            std::process::exit(1);
+        }
+        if pid == 0 {
+            unsafe {
+                libc::signal(libc::SIGTERM, libc::SIG_DFL);
+                libc::signal(libc::SIGINT, libc::SIG_DFL);
+            }
+            return;
+        }
+        SERVER.store(pid, Ordering::SeqCst);
+        let mut status = 0;
+        while unsafe { libc::waitpid(pid, &mut status, 0) } < 0 {}
+        if STOPPING.load(Ordering::SeqCst) {
+            std::process::exit(0);
+        }
+    }
+}
+
 fn main() {
+    let std_listener = std::net::TcpListener::bind("0.0.0.0:9000").expect("bind");
+    std_listener.set_nonblocking(true).expect("nonblocking");
+    supervise();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(8)
         .enable_all()
         .build()
         .expect("runtime");
     rt.block_on(async {
-        let listener = TcpListener::bind("0.0.0.0:9000").await.expect("bind");
+        let listener = TcpListener::from_std(std_listener).expect("listener");
         let sem = Arc::new(Semaphore::new(MAX_CONCURRENT));
         loop {
             match listener.accept().await {
