@@ -4,8 +4,6 @@ fcgi-go is a Go library that passes HTTP requests to a FastCGI responder, such a
 You mount one `http.HandlerFunc` per script in your own router.
 Routing, rewrites, static files and authentication stay in your code.
 
-There is no release yet.
-
 ## Mount one handler per script
 
 ```sh
