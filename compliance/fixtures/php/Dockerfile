@@ -1,4 +1,4 @@
-FROM php:8.3-fpm
+FROM php:8.5-fpm
 # intl, gd and opcache are not in the base image; the app cases use them.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libicu-dev libpng-dev libjpeg-dev libfreetype6-dev \
