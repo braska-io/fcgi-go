@@ -1,0 +1,52 @@
+version: 2
+
+# Minor and patch updates arrive as one pull request per ecosystem and merge
+# themselves once CI is green (.github/workflows/dependabot.yml). Major
+# updates come one by one and wait for a review.
+updates:
+  - package-ecosystem: gomod
+    directories: ["/", "/compliance", "/benchmarks", "/benchmarks/gateway"]
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      go:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories:
+      - /compliance/fixtures/*
+      - /benchmarks/php
+      - /benchmarks/gateway
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      images:
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /compliance/fixtures/rust
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      rust:
+        update-types: [minor, patch]
