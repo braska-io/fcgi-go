@@ -8,7 +8,7 @@ A responder picks the fixture from the path of `SCRIPT_NAME`, without the leadin
 
 | Name | Language | FastCGI stack | Process model | Special role |
 | --- | --- | --- | --- | --- |
-| `php` | PHP 8.3 | php-fpm | pre-forked children | the most common production responder; scripts in `fixtures/php/` |
+| `php` | PHP 8.5 | php-fpm | pre-forked children | the most common production responder; scripts in `fixtures/php/` |
 | `c` | C | libfcgi (`fcgiapp.h`) | 4 threads in a supervised process | the reference C stack |
 | `cpp` | C++ | own code; no maintained C++ library exists | threads in a supervised process | a second protocol stack beside libfcgi |
 | `rust` | Rust | own code, no FastCGI crate | async tasks in a supervised process | also emits malformed protocol on request |

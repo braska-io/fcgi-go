@@ -22,9 +22,9 @@ cases:
     tier: app
     source: "php.net reserved.constants, PHP_MAJOR_VERSION and PHP_MINOR_VERSION"
     level: OBSERVED
-    summary: The responder runs PHP 8.3, the version the app cases are written for.
+    summary: The responder runs PHP 8.5, the version the app cases are written for.
     request: { method: GET, target: "/app/runtime/info.php?op=version" }
-    expect: { status: 200, body: "8.3" }
+    expect: { status: 200, body: "8.5" }
   - id: php-rt-request-time
     tier: app
     source: "php.net reserved.variables.server, REQUEST_TIME and REQUEST_TIME_FLOAT"
