@@ -10,7 +10,7 @@ Each runs at several client counts.
 
 | Container | Image | CPUs | Role |
 | --- | --- | ---: | --- |
-| `fpm` | `php:8.3-fpm`, [php/](php/) | 8 | 16 static children, opcache on |
+| `fpm` | `php:8.5-fpm`, [php/](php/); the results below ran on 8.3 | 8 | 16 static children, opcache on |
 | `nginx` | `nginx:1.29`, [nginx/nginx.conf](nginx/nginx.conf) | 2 | 2 workers, defaults otherwise |
 | `gateway` | [gateway/](gateway/) | 2 | fcgi-go with `WithMaxConns(64)` |
 
