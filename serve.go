@@ -67,7 +67,7 @@ func (g *Gateway) answer(w http.ResponseWriter, r *http.Request, cfg *config, t 
 	err := g.handle(w, r, cfg, t)
 	if err == nil {
 		if t.writeErr != nil {
-			cfg.logger.Warn("write response", "script", cfg.script, "error", t.writeErr)
+			cfg.logger.WarnContext(r.Context(), "write response", "script", cfg.script, "error", t.writeErr)
 		}
 		return OriginResponder, t.writeErr
 	}
@@ -79,7 +79,7 @@ func (g *Gateway) answer(w http.ResponseWriter, r *http.Request, cfg *config, t 
 	if se, ok := errors.AsType[*statusError](err); ok {
 		status = se.status
 	}
-	cfg.logger.Warn("fcgi call failed", "script", cfg.script, "status", status, "error", err)
+	cfg.logger.WarnContext(r.Context(), "fcgi call failed", "script", cfg.script, "status", status, "error", err)
 	http.Error(w, http.StatusText(status), status)
 	return OriginGateway, err
 }
@@ -173,7 +173,7 @@ func (g *Gateway) call(ctx context.Context, r *http.Request, cfg *config, in *sp
 	err = g.roundTrip(ctx, r, cfg, in, out, stderr)
 	release()
 	if stderr.len() > 0 {
-		cfg.logger.Warn("responder stderr", slog.String("script", cfg.script), slog.String("output", stderr.String()))
+		cfg.logger.WarnContext(r.Context(), "responder stderr", slog.String("script", cfg.script), slog.String("output", stderr.String()))
 	}
 	if err != nil {
 		_ = out.Close()
@@ -224,7 +224,7 @@ func (g *Gateway) roundTrip(ctx context.Context, r *http.Request, cfg *config, i
 		return fail(http.StatusBadGateway, "responder refused the request: protocol status %d", res.ProtocolStatus)
 	}
 	if res.AppStatus != 0 {
-		cfg.logger.Warn("responder exited with non-zero status", "script", cfg.script, "app_status", res.AppStatus)
+		cfg.logger.WarnContext(r.Context(), "responder exited with non-zero status", "script", cfg.script, "app_status", res.AppStatus)
 	}
 	return nil
 }
