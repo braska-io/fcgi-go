@@ -36,6 +36,7 @@ type config struct {
 	pathInfo     func(*http.Request) string
 	query        func(*http.Request) string
 	dropHeaders  []string
+	observer     func(*http.Request, CallInfo)
 }
 
 func defaultConfig() config {
