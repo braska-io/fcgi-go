@@ -217,6 +217,28 @@ Every log line about a request goes through the `slog` `*Context` methods with `
 
 A `slog.Handler` can therefore add the caller's request ID or trace ID from the context to each line.
 
+## Per-call state lives in a wrapper around the script handler
+
+Some callers bind state to one call, such as a token that is valid only while the call runs.
+Such a caller wraps the handler that `Script` returns and releases the state in a `defer`:
+
+```go
+api := gw.Script("api.php", fcgi.WithParams(func(r *http.Request) map[string]string {
+	return map[string]string{"HTTP_X_CALL_TOKEN": tokenFrom(r.Context())}
+}))
+mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+	tok := tokens.Issue()
+	defer tokens.Revoke(tok)
+	api(w, r.WithContext(withToken(r.Context(), tok)))
+})
+```
+
+The `defer` releases the state on every path, including failures and panics.
+`WithParams` has no end-of-call hook.
+The observer is no replacement either, because it runs after the response.
+A script's `WithObserver` also replaces the gateway's, which would silently skip a release placed there.
+The package example `Example_perCallState` runs this pattern as a test.
+
 ## Readiness never runs a script
 
 `Ping` dials the address and closes the connection. A FastCGI request would occupy a worker, and a saturated pool would then look unready. `Shutdown` answers 503 to new calls and waits for running ones until its context ends.
