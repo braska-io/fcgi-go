@@ -1,6 +1,6 @@
 # fcgi-go serves HTTP requests from a FastCGI responder through one handler per script
 
-Status: Draft, 2026-10-20. Version 0.1 implements the behaviour below. The observer is new in 0.2.
+Status: Draft, 2026-10-20. Version 0.1 implements the behaviour below. The observer and request-context logging are new in 0.2.
 
 fcgi-go is a Go library that puts a FastCGI responder such as php-fpm behind `net/http`. A responder is the FastCGI process that runs the scripts. It replaces the FastCGI part of a web server like nginx; routing stays with the caller. This page is for the engineer who implements the library and the engineer who mounts it. It fixes the public API, the behaviour behind it, and how the [compliance suite](../compliance/README.md) proves them.
 
@@ -204,6 +204,18 @@ A built-in exporter would pick one stack and one label set for every caller.
 The observer receives the `*http.Request`, so the caller reads its own route, tenant, or trace from the request's context.
 `CallInfo` carries only what the caller cannot see from outside the handler.
 That is the origin of the status, the slot wait, and the classified error.
+
+## Log lines carry the request context
+
+Every log line about a request goes through the `slog` `*Context` methods with `r.Context()`:
+
+- `fcgi call failed`
+- `responder stderr`
+- `responder exited with non-zero status`
+- `write response`
+- `fcgi observer panicked`
+
+A `slog.Handler` can therefore add the caller's request ID or trace ID from the context to each line.
 
 ## Readiness never runs a script
 
