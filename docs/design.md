@@ -1,6 +1,6 @@
 # fcgi-go serves HTTP requests from a FastCGI responder through one handler per script
 
-Status: Draft, 2026-10-17. The API exists; the behaviour below does not. Every handler answers `501 Not Implemented` today.
+Status: Draft, 2026-10-20. Version 0.1 implements the behaviour below. The observer and request-context logging are new in 0.2.
 
 fcgi-go is a Go library that puts a FastCGI responder such as php-fpm behind `net/http`. A responder is the FastCGI process that runs the scripts. It replaces the FastCGI part of a web server like nginx; routing stays with the caller. This page is for the engineer who implements the library and the engineer who mounts it. It fixes the public API, the behaviour behind it, and how the [compliance suite](../compliance/README.md) proves them.
 
@@ -60,6 +60,7 @@ Options come in two kinds. An `Option` works on `New` and on `Script`. On `Scrip
 | `WithPathInfo(f)` | script | derived | `PATH_INFO` per request; by default the path after `/<script>`, as RFC 3875 section 3.3 splits the script URI |
 | `WithQuery(f)` | script | the raw query | `QUERY_STRING` per request |
 | `WithDropResponseHeaders(names...)` | both | none | responder headers removed before the client sees them |
+| `WithObserver(f)` | both | none | called once per call with its outcome, after the response; see [The observer reports every call once](#the-observer-reports-every-call-once-after-the-response) |
 
 ## Parameters are written in a fixed order, and later ones win
 
@@ -118,6 +119,8 @@ php-fpm ignores `FCGI_ABORT_REQUEST`. Closing the connection is the only cancel,
 
 | Situation | Status |
 | --- | --- |
+| request body larger than `WithMaxBody` | 413 |
+| request body unreadable, or not the length its `Content-Length` declares | 400 |
 | responder address unreachable | 502 |
 | no free slot before the deadline | 503 |
 | deadline reached during the call | 504 |
@@ -137,6 +140,104 @@ A failed call never sends part of the responder's output to the client. The libr
 - A non-zero application status in `FCGI_END_REQUEST` is logged; the response stands.
 - A response without `Content-Length` gets one from the spooled body, except for `HEAD`. Some responders, such as php-fpm, send no body on `HEAD`; a computed 0 would contradict the `GET` response.
 - `Range` request headers reach the responder unchanged. The gateway never builds a 206 itself; RFC 9110 section 14.2 allows a server to ignore `Range`.
+
+## The observer reports every call once, after the response
+
+```go
+func WithObserver(f func(r *http.Request, info CallInfo)) Option
+
+type Origin int
+
+const (
+	OriginResponder Origin = iota // the responder's reply
+	OriginGateway                 // the library, from the failure table above
+	OriginClient                  // the client cancelled
+)
+
+func (o Origin) String() string // "responder", "gateway", "client"
+
+type CallInfo struct {
+	Script        string
+	Status        int
+	Origin        Origin
+	Err           error
+	SlotWait      time.Duration
+	Duration      time.Duration
+	RequestBytes  int64
+	ResponseBytes int64
+}
+```
+
+The library calls the observer exactly once per call of a `Script` handler.
+It runs synchronously in the handler's goroutine, after the last byte is written or the call is abandoned.
+This includes the 503 during `Shutdown` and the 400 and 413 for request bodies.
+A script's `WithObserver` replaces the gateway's for that script; `WithObserver(nil)` turns it off.
+
+`Origin` names who decided the status:
+
+| Origin | `Status` | `Err` | When |
+| --- | --- | --- | --- |
+| `OriginResponder` | the responder's status | nil, or the failure to write the body | the responder's reply reached the client |
+| `OriginGateway` | 400, 413, 502, 503, 504 | the classified failure | the library answered with a status from the failure table |
+| `OriginClient` | 0 | wraps `context.Canceled` | the client left before a status was written |
+
+The other fields:
+
+- `SlotWait` is the time spent waiting for a `WithMaxConns` slot.
+- `Duration` runs from the start of the slot wait to the last byte written to the client.
+  A call that ends before the slot wait, such as a 413 or the 503 during `Shutdown`, reports 0 for both.
+- `RequestBytes` counts request body bytes read from the client, also when the read failed.
+- `ResponseBytes` counts body bytes written to the client, including the library's error text.
+
+The observer runs after the responder slot is released, so it never holds a responder worker.
+It still delays the handler's return, and `Shutdown` waits for it.
+The observer must not block: hand slow work, such as a network export, to another goroutine.
+
+The library recovers a panic in the observer and logs `fcgi observer panicked` at error level with the value and the stack.
+The response is complete when the observer runs.
+A propagated panic could only harm it. net/http would abort the connection, and a server without recovery would exit.
+
+## The library ships no metrics
+
+The caller owns its metrics stack and its labels.
+A built-in exporter would pick one stack and one label set for every caller.
+The observer receives the `*http.Request`, so the caller reads its own route, tenant, or trace from the request's context.
+`CallInfo` carries only what the caller cannot see from outside the handler.
+That is the origin of the status, the slot wait, and the classified error.
+
+## Log lines carry the request context
+
+Every log line about a request goes through the `slog` `*Context` methods with `r.Context()`:
+
+- `fcgi call failed`
+- `responder stderr`
+- `responder exited with non-zero status`
+- `write response`
+- `fcgi observer panicked`
+
+A `slog.Handler` can therefore add the caller's request ID or trace ID from the context to each line.
+
+## Per-call state lives in a wrapper around the script handler
+
+Some callers bind state to one call, such as a token that is valid only while the call runs.
+Such a caller wraps the handler that `Script` returns and releases the state in a `defer`:
+
+```go
+api := gw.Script("api.php", fcgi.WithParams(func(r *http.Request) map[string]string {
+	return map[string]string{"HTTP_X_CALL_TOKEN": tokenFrom(r.Context())}
+}))
+mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+	tok := tokens.Issue()
+	defer tokens.Revoke(tok)
+	api(w, r.WithContext(withToken(r.Context(), tok)))
+})
+```
+
+The `defer` releases the state on every path, including failures and panics.
+`WithParams` has no end-of-call hook.
+The observer is no replacement either, because it runs after the response.
+A script's `WithObserver` also replaces the gateway's, which would silently skip a release placed there.
+The package example `Example_perCallState` runs this pattern as a test.
 
 ## Readiness never runs a script
 
