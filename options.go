@@ -74,8 +74,9 @@ type bothOption func(*config)
 func (f bothOption) applyGateway(c *config) { f(c) }
 func (f bothOption) applyScript(c *config)  { f(c) }
 
-// WithMaxConns caps concurrent calls to the responder. Set it to the
-// responder's worker count.
+// WithMaxConns caps concurrent calls to the responder. Set it to 2-4 times
+// the responder's worker count: a cap equal to the worker count leaves each
+// worker idle while the next call is dialled.
 func WithMaxConns(n int) GatewayOption {
 	return gatewayOption(func(c *config) { c.maxConns = n })
 }

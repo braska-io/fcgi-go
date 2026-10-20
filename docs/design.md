@@ -1,6 +1,6 @@
 # fcgi-go serves HTTP requests from a FastCGI responder through one handler per script
 
-Status: Draft, 2026-10-17. The API exists; the behaviour below does not. Every handler answers `501 Not Implemented` today.
+Status: Draft, 2026-10-20. Version 0.1 implements the behaviour below.
 
 fcgi-go is a Go library that puts a FastCGI responder such as php-fpm behind `net/http`. A responder is the FastCGI process that runs the scripts. It replaces the FastCGI part of a web server like nginx; routing stays with the caller. This page is for the engineer who implements the library and the engineer who mounts it. It fixes the public API, the behaviour behind it, and how the [compliance suite](../compliance/README.md) proves them.
 
