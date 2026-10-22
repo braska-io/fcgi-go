@@ -66,6 +66,13 @@ cases:
     summary: A body above the in-memory limit spills to disk and arrives intact with exact CONTENT_LENGTH.
     request: { method: POST, target: /dump, body_size: 3145728, framing: chunked }
     expect: { status: 200, env: { CONTENT_LENGTH: "3145728" }, stdin_length: 3145728 }
+  - id: gw-no-body-empty-content
+    tier: gateway
+    source: "docs/design.md, deviations from RFC 3875"
+    level: MUST
+    summary: A GET without a body reaches the responder with CONTENT_LENGTH and CONTENT_TYPE set and empty, as nginx sends them.
+    request: { method: GET, target: /dump }
+    expect: { status: 200, env: { CONTENT_LENGTH: "", CONTENT_TYPE: "" }, stdin_length: 0 }
   - id: gw-x-powered-by-dropped
     tier: gateway
     source: "docs/design.md, options table, WithDropResponseHeaders"
