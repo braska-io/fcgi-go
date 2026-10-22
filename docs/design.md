@@ -82,6 +82,7 @@ Each deviation follows what nginx sends, because PHP applications rely on it. Th
 | --- | --- | --- |
 | Section 4.1.18: a server SHOULD NOT pass `Authorization` | passes it as `HTTP_AUTHORIZATION` | applications need it for Basic and Bearer authentication |
 | Section 4.1.18: a server SHOULD remove `Content-Type` and `Content-Length` from `HTTP_*` | passes them as `HTTP_CONTENT_TYPE` and `HTTP_CONTENT_LENGTH` too | applications detect JSON bodies on `HTTP_CONTENT_TYPE` |
+| Section 4.1.2: `CONTENT_LENGTH` is unset without a body; section 4.1.3: `CONTENT_TYPE` is unset without a type | sends both as empty values; an empty `WithParam` value removes them | nginx's `fastcgi_params` send them so |
 | Section 3.3: `SCRIPT_NAME` may be empty when `PATH_INFO` covers the path | `SCRIPT_NAME` is always `/<script>` | front controllers compare it with their own name |
 
 ## The gateway sets these variables beyond RFC 3875
