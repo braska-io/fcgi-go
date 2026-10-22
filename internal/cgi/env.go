@@ -118,12 +118,14 @@ func setMeta(e *env, r *http.Request, c Config) {
 		e.set("PATH_INFO", pi)
 		e.set("PATH_TRANSLATED", c.DocumentRoot+pi)
 	}
+	// nginx's fastcgi_params send both even without a body, as empty
+	// values, and PHP applications are written against that.
+	contentLength := ""
 	if c.HasBody {
-		e.set("CONTENT_LENGTH", strconv.FormatInt(c.BodyLength, 10))
+		contentLength = strconv.FormatInt(c.BodyLength, 10)
 	}
-	if ct := r.Header.Get("Content-Type"); ct != "" {
-		e.set("CONTENT_TYPE", ct)
-	}
+	e.set("CONTENT_LENGTH", contentLength)
+	e.set("CONTENT_TYPE", r.Header.Get("Content-Type"))
 	if r.TLS != nil {
 		e.set("HTTPS", "on")
 	}

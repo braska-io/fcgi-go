@@ -831,6 +831,7 @@ cases:
     summary: >-
       CONTENT_LENGTH is set if and only if the request has a body; a GET
       without one has no CONTENT_LENGTH on any version.
+    waived: "docs/design.md, deviations: the gateway sends CONTENT_LENGTH empty without a body and CONTENT_TYPE empty without a type, as nginx does."
     request:
       method: GET
       target: "/dump.php"

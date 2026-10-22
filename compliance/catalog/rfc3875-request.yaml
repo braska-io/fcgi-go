@@ -684,6 +684,7 @@ cases:
     source: "RFC 3875 section 4.1.2"
     level: MUST
     summary: A GET without a message-body has no CONTENT_LENGTH (if and only if a body is present).
+    waived: "docs/design.md, deviations: the gateway sends CONTENT_LENGTH empty without a body and CONTENT_TYPE empty without a type, as nginx does."
     request:
       method: GET
       target: "/dump.php"
@@ -698,6 +699,7 @@ cases:
     source: "RFC 3875 section 4.1.2"
     level: MUST
     summary: A POST with no length information and no body has no message-body, so CONTENT_LENGTH is unset.
+    waived: "docs/design.md, deviations: the gateway sends CONTENT_LENGTH empty without a body and CONTENT_TYPE empty without a type, as nginx does."
     request:
       method: POST
       target: "/dump.php"
@@ -713,6 +715,7 @@ cases:
     source: "RFC 3875 section 4.1.2"
     level: MUST
     summary: A DELETE without a body has no CONTENT_LENGTH.
+    waived: "docs/design.md, deviations: the gateway sends CONTENT_LENGTH empty without a body and CONTENT_TYPE empty without a type, as nginx does."
     request:
       method: DELETE
       target: "/dump.php"
@@ -928,6 +931,7 @@ cases:
     source: "RFC 3875 section 4.1.3"
     level: MUST
     summary: CONTENT_TYPE has no default value, so a body sent without Content-Type leaves it unset.
+    waived: "docs/design.md, deviations: the gateway sends CONTENT_LENGTH empty without a body and CONTENT_TYPE empty without a type, as nginx does."
     request:
       method: POST
       target: "/dump.php"

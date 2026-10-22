@@ -490,14 +490,14 @@ cases:
     tier: app
     source: "php.net, php:// wrappers, php://input (wrappers.php)"
     level: MUST
-    summary: "A body without Content-Type leaves $_POST empty and is readable through php://input."
+    summary: "A body without Content-Type leaves $_POST empty and is readable through php://input; CONTENT_TYPE is empty, as behind nginx."
     request:
       method: POST
       target: "/app/request/input.php"
       body: "a=1"
     expect:
       status: 200
-      body: "{\"method\":\"POST\",\"content_type\":null,\"content_length\":\"3\",\"post\":{},\"files\":0,\"input_length\":3,\"input_sha256\":\"c22fea5d7428e5cf47ef6354c97c9223c95d6dcdc3e0d2300ff79056b1ff3d85\",\"input\":\"a=1\",\"warning\":null}"
+      body: "{\"method\":\"POST\",\"content_type\":\"\",\"content_length\":\"3\",\"post\":{},\"files\":0,\"input_length\":3,\"input_sha256\":\"c22fea5d7428e5cf47ef6354c97c9223c95d6dcdc3e0d2300ff79056b1ff3d85\",\"input\":\"a=1\",\"warning\":null}"
 
   - id: php-req-input-spilled-body
     tier: app

@@ -58,16 +58,39 @@ func TestBuildMetaVariables(t *testing.T) {
 			t.Errorf("%s = %q, want %q", k, env[k], v)
 		}
 	}
-	if _, ok := env["CONTENT_LENGTH"]; ok {
-		t.Error("CONTENT_LENGTH set without a body")
+}
+
+// nginx's fastcgi_params send both without a body, as empty values.
+func TestBuildContentVariablesEmptyWithoutBody(t *testing.T) {
+	r := newRequest("GET", "/a.php")
+	env := asMap(Build(r, Config{Script: "a.php"}))
+	for _, k := range []string{"CONTENT_LENGTH", "CONTENT_TYPE"} {
+		if v, ok := env[k]; !ok || v != "" {
+			t.Errorf("%s = %q (set %v), want set and empty", k, v, ok)
+		}
 	}
 }
 
-func TestBuildContentLengthOnlyWithBody(t *testing.T) {
+func TestBuildContentLengthWithEmptyBody(t *testing.T) {
 	r := newRequest("POST", "/a.php")
 	env := asMap(Build(r, Config{Script: "a.php", HasBody: true, BodyLength: 0}))
 	if env["CONTENT_LENGTH"] != "0" {
 		t.Errorf("CONTENT_LENGTH = %q, want 0", env["CONTENT_LENGTH"])
+	}
+}
+
+// An empty WithParam value still removes them, for responders that follow
+// RFC 3875 to the letter.
+func TestBuildContentVariablesRemovable(t *testing.T) {
+	r := newRequest("GET", "/a.php")
+	env := asMap(Build(r, Config{
+		Script:  "a.php",
+		Gateway: map[string]string{"CONTENT_LENGTH": "", "CONTENT_TYPE": ""},
+	}))
+	for _, k := range []string{"CONTENT_LENGTH", "CONTENT_TYPE"} {
+		if v, ok := env[k]; ok {
+			t.Errorf("%s = %q, want absent", k, v)
+		}
 	}
 }
 
