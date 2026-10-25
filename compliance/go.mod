@@ -9,7 +9,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.33.1
 	github.com/onsi/gomega v1.44.0
 	github.com/quic-go/qpack v0.6.0
-	github.com/quic-go/quic-go v0.64.0
+	github.com/quic-go/quic-go v0.64.1
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/net v0.61.0
 )
