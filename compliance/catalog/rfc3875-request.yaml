@@ -698,6 +698,7 @@ cases:
     tier: spec
     source: "RFC 3875 section 4.1.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: A POST with no length information and no body has no message-body, so CONTENT_LENGTH is unset.
     waived: "docs/design.md, deviations: the gateway sends CONTENT_LENGTH empty without a body and CONTENT_TYPE empty without a type, as nginx does."
     request:
@@ -748,6 +749,7 @@ cases:
     tier: spec
     source: "RFC 3875 section 4.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: For a body without Content-Length (chunked on h1, unsized frames on h2/h3) CONTENT_LENGTH is the decoded length.
     request:
       method: POST
@@ -766,6 +768,7 @@ cases:
     tier: spec
     source: "RFC 3875 section 4.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: Transfer-codings are removed from the body; the responder reads the decoded bytes only.
     request:
       method: POST
@@ -785,6 +788,7 @@ cases:
     tier: spec
     source: "RFC 3875 section 4.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: A 1 MiB unsized body gets CONTENT_LENGTH equal to its decoded size.
     request:
       method: POST

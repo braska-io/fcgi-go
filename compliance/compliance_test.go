@@ -1,11 +1,15 @@
 package compliance_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,11 +20,17 @@ import (
 	"github.com/braska-io/fcgi-go/compliance"
 )
 
+// fcgiGateway is the library under test, bound to one responder.
+type fcgiGateway struct {
+	gw *fcgi.Gateway
+	r  *compliance.Responder
+}
+
 // fcgiTarget wires the library under test with the configuration every case
 // assumes (README, "The suite configures the handler the same way").
 func fcgiTarget(spool string) compliance.Target {
-	return func(r *compliance.Responder) func(compliance.Route) http.Handler {
-		gw := fcgi.New(r.Address,
+	return func(r *compliance.Responder) compliance.Gateway {
+		return &fcgiGateway{r: r, gw: fcgi.New(r.Address,
 			fcgi.WithDocumentRoot(r.DocumentRoot),
 			fcgi.WithMaxConns(4),
 			fcgi.WithSpool(spool, 1<<20),
@@ -28,30 +38,85 @@ func fcgiTarget(spool string) compliance.Target {
 			fcgi.WithDropResponseHeaders("X-Powered-By"),
 			fcgi.WithTimeout(5*time.Second),
 			fcgi.WithMaxBody(10<<20),
-		)
-		return func(rt compliance.Route) http.Handler {
-			var opts []fcgi.ScriptOption
-			if rt.PathInfo != "" {
-				pi := rt.PathInfo
-				opts = append(opts, fcgi.WithPathInfo(func(*http.Request) string { return pi }))
-			}
-			if rt.QueryString != nil {
-				q := *rt.QueryString
-				opts = append(opts, fcgi.WithQuery(func(*http.Request) string { return q }))
-			}
-			if len(rt.Params) > 0 {
-				p := rt.Params
-				opts = append(opts, fcgi.WithParams(func(*http.Request) map[string]string { return p }))
-			}
-			if rt.TimeoutMS > 0 {
-				opts = append(opts, fcgi.WithTimeout(time.Duration(rt.TimeoutMS)*time.Millisecond))
-			}
-			if rt.MaxResponse > 0 {
-				opts = append(opts, fcgi.WithMaxResponse(rt.MaxResponse))
-			}
-			return gw.Script(r.Script(rt.Script), opts...)
+		)}
+	}
+}
+
+// options are the route's settings that Script and Caller share. Path info
+// and params go through Request fields on a call, so only the handler adds
+// them as options.
+func options(rt compliance.Route) []fcgi.ScriptOption {
+	var opts []fcgi.ScriptOption
+	if rt.QueryString != nil {
+		q := *rt.QueryString
+		opts = append(opts, fcgi.WithQuery(func(*http.Request) string { return q }))
+	}
+	if rt.TimeoutMS > 0 {
+		opts = append(opts, fcgi.WithTimeout(time.Duration(rt.TimeoutMS)*time.Millisecond))
+	}
+	if rt.MaxResponse > 0 {
+		opts = append(opts, fcgi.WithMaxResponse(rt.MaxResponse))
+	}
+	return opts
+}
+
+func (g *fcgiGateway) Handler(rt compliance.Route) http.Handler {
+	opts := options(rt)
+	if rt.PathInfo != "" {
+		pi := rt.PathInfo
+		opts = append(opts, fcgi.WithPathInfo(func(*http.Request) string { return pi }))
+	}
+	if len(rt.Params) > 0 {
+		p := rt.Params
+		opts = append(opts, fcgi.WithParams(func(*http.Request) map[string]string { return p }))
+	}
+	return g.gw.Script(g.r.Script(rt.Script), opts...)
+}
+
+// Call maps the case one to one onto fcgi.Request and the Caller options. The
+// suite serves its HTTP transports over TLS, so the request says so too.
+func (g *fcgiGateway) Call(ctx context.Context, rt compliance.Route, req *compliance.Request) (*compliance.CallResult, error) {
+	fr := &fcgi.Request{
+		Method: req.Method,
+		Target: req.Target,
+		Host:   req.Host(),
+		TLS:    true,
+		Header: http.Header{},
+		Params: rt.Params,
+	}
+	for _, h := range req.Headers {
+		if strings.EqualFold(h[0], "Host") {
+			fr.Host = h[1]
+			continue
+		}
+		fr.Header.Add(h[0], h[1])
+	}
+	if rt.PathInfo != "" {
+		fr.PathInfo = &rt.PathInfo
+	}
+	if body := req.Payload(); body != nil {
+		fr.Body, fr.ContentLength = bytes.NewReader(body), int64(len(body))
+		// A length-framed client sends this field, and Script sees it in
+		// r.Header; the equivalent Request carries it too.
+		if fr.Header.Get("Content-Length") == "" {
+			fr.Header.Set("Content-Length", strconv.Itoa(len(body)))
 		}
 	}
+
+	resp, err := g.gw.Caller(g.r.Script(rt.Script), options(rt)...).Call(ctx, fr)
+	var ferr *fcgi.Error
+	if errors.As(err, &ferr) {
+		return &compliance.CallResult{Status: ferr.Status}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("call: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read call body: %w", err)
+	}
+	return &compliance.CallResult{Status: resp.Status, Header: resp.Header, Body: body}, nil
 }
 
 var (
@@ -100,7 +165,7 @@ var _ = Describe("fcgi-go", func() {
 			// the remaining cases.
 			var (
 				once  sync.Once
-				route func(compliance.Route) http.Handler
+				route compliance.Gateway
 			)
 			BeforeEach(func() {
 				once.Do(func() {

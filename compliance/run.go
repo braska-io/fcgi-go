@@ -88,10 +88,28 @@ func LoadResponders(dir string) ([]Responder, error) {
 	return out, nil
 }
 
-// Target builds the gateway under test for one responder. The returned
-// function gives the handler for one route; it is called once per request,
-// so a gateway shared across calls keeps its connection limit.
-type Target func(r *Responder) func(rt Route) http.Handler
+// CallResult is the outcome of a call that bypasses the HTTP server. A
+// failure of the gateway itself arrives as the status it decided, with no
+// header and no body.
+type CallResult struct {
+	Status int
+	Header http.Header
+	Body   []byte
+}
+
+// Gateway is the gateway under test, bound to one responder. Handler and Call
+// are called once per request, so a gateway shared across requests keeps its
+// connection limit.
+type Gateway interface {
+	// Handler serves one route behind an HTTP server (h1, h2, h3).
+	Handler(rt Route) http.Handler
+	// Call runs one route without an HTTP server (call). It returns an error
+	// only when the run itself fails, not when the gateway answers a status.
+	Call(ctx context.Context, rt Route, req *Request) (*CallResult, error)
+}
+
+// Target builds the gateway under test for one responder.
+type Target func(r *Responder) Gateway
 
 // Observation is what the client saw, plus what the dump fixture reported.
 type Observation struct {
@@ -106,12 +124,15 @@ type Observation struct {
 	StdinSHA256 string
 }
 
-// Do sends one request over tr to the handler and observes the result.
-func Do(ctx context.Context, tr Transport, req *Request, h http.Handler) (*Observation, error) {
-	if tr == H3 {
-		return doH3Server(ctx, req, h)
+// Do sends one request over tr to the gateway and observes the result.
+func Do(ctx context.Context, tr Transport, req *Request, rt Route, g Gateway) (*Observation, error) {
+	switch tr {
+	case Call:
+		return doCall(ctx, req, rt, g)
+	case H3:
+		return doH3Server(ctx, req, g.Handler(rt))
 	}
-	srv := httptest.NewUnstartedServer(h)
+	srv := httptest.NewUnstartedServer(g.Handler(rt))
 	srv.EnableHTTP2 = tr == H2
 	srv.StartTLS()
 	defer srv.Close()
@@ -140,6 +161,24 @@ func Do(ctx context.Context, tr Transport, req *Request, h http.Handler) (*Obser
 	return o, nil
 }
 
+// callPort is the SERVER_PORT of the suite's TLS server on its default; a
+// call has no listener to report one.
+const callPort = "443"
+
+func doCall(ctx context.Context, req *Request, rt Route, g Gateway) (*Observation, error) {
+	start := time.Now()
+	res, err := g.Call(ctx, rt, req)
+	if err != nil {
+		return nil, err
+	}
+	o := &Observation{Status: res.Status, Header: res.Header, Body: res.Body, Duration: time.Since(start), Port: callPort}
+	if o.Header == nil {
+		o.Header = http.Header{}
+	}
+	o.parseDump()
+	return o, nil
+}
+
 func doH3Server(ctx context.Context, req *Request, h http.Handler) (*Observation, error) {
 	addr, stop, err := serveH3(h)
 	if err != nil {
@@ -160,6 +199,12 @@ func doH3Server(ctx context.Context, req *Request, h http.Handler) (*Observation
 	o.parseDump()
 	return o, nil
 }
+
+// Payload is the request body as bytes; nil without a body.
+func (r *Request) Payload() []byte { return r.body() }
+
+// Host is the authority of the request, or the suite default.
+func (r *Request) Host() string { return r.authority() }
 
 func (r *Request) body() []byte {
 	switch {
@@ -317,8 +362,8 @@ func (o *Observation) parseDump() {
 }
 
 // RunCase runs one case over one transport against one responder.
-func RunCase(ctx context.Context, c *Case, tr Transport, target func(Route) http.Handler) ([]string, error) {
-	o, err := Do(ctx, tr, &c.Request, target(c.Route.withScript(c.Request.Target)))
+func RunCase(ctx context.Context, c *Case, tr Transport, g Gateway) ([]string, error) {
+	o, err := Do(ctx, tr, &c.Request, c.Route.withScript(c.Request.Target), g)
 	if err != nil {
 		return nil, err
 	}
@@ -326,12 +371,12 @@ func RunCase(ctx context.Context, c *Case, tr Transport, target func(Route) http
 }
 
 // RunScenario runs the steps of a scenario in order over one transport.
-func RunScenario(ctx context.Context, s *Scenario, tr Transport, target func(Route) http.Handler) ([]string, error) {
+func RunScenario(ctx context.Context, s *Scenario, tr Transport, g Gateway) ([]string, error) {
 	var jar *cookieJar
 	if s.CookieJar {
 		jar = &cookieJar{values: map[string]string{}}
 	}
-	return runSteps(ctx, s.Steps, tr, target, "", jar)
+	return runSteps(ctx, s.Steps, tr, g, "", jar)
 }
 
 // cookieJar carries Set-Cookie values from one step to the Cookie field of
@@ -382,7 +427,7 @@ func (j *cookieJar) apply(r *Request) *Request {
 	return &cp
 }
 
-func runSteps(ctx context.Context, steps []Step, tr Transport, target func(Route) http.Handler, prefix string, jar *cookieJar) ([]string, error) {
+func runSteps(ctx context.Context, steps []Step, tr Transport, g Gateway, prefix string, jar *cookieJar) ([]string, error) {
 	var failures []string
 	for i := range steps {
 		st := &steps[i]
@@ -395,7 +440,7 @@ func runSteps(ctx context.Context, steps []Step, tr Transport, target func(Route
 				return failures, ctx.Err()
 			}
 		case len(st.Parallel) > 0:
-			f, err := runParallel(ctx, st.Parallel, tr, target, label+".", jar)
+			f, err := runParallel(ctx, st.Parallel, tr, g, label+".", jar)
 			failures = append(failures, f...)
 			if err != nil {
 				return failures, err
@@ -408,7 +453,7 @@ func runSteps(ctx context.Context, steps []Step, tr Transport, target func(Route
 					return failures, ctx.Err()
 				}
 			}
-			o, err := Do(ctx, tr, jar.apply(st.Request), target(st.Route.withScript(st.Request.Target)))
+			o, err := Do(ctx, tr, jar.apply(st.Request), st.Route.withScript(st.Request.Target), g)
 			if err != nil {
 				return failures, fmt.Errorf("%s: %w", label, err)
 			}
@@ -423,7 +468,7 @@ func runSteps(ctx context.Context, steps []Step, tr Transport, target func(Route
 	return failures, nil
 }
 
-func runParallel(ctx context.Context, steps []Step, tr Transport, target func(Route) http.Handler, prefix string, jar *cookieJar) ([]string, error) {
+func runParallel(ctx context.Context, steps []Step, tr Transport, g Gateway, prefix string, jar *cookieJar) ([]string, error) {
 	var (
 		mu       sync.Mutex
 		wg       sync.WaitGroup
@@ -432,7 +477,7 @@ func runParallel(ctx context.Context, steps []Step, tr Transport, target func(Ro
 	)
 	for i := range steps {
 		wg.Go(func() {
-			f, err := runSteps(ctx, steps[i:i+1], tr, target, prefix+strconv.Itoa(i+1)+" ", jar)
+			f, err := runSteps(ctx, steps[i:i+1], tr, g, prefix+strconv.Itoa(i+1)+" ", jar)
 			mu.Lock()
 			defer mu.Unlock()
 			failures = append(failures, f...)

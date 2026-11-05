@@ -56,6 +56,7 @@ cases:
     tier: gateway
     source: "docs/design.md, options table, WithMaxBody"
     level: MUST
+    transports: [h1, h2, h3]
     summary: A body of unknown length above the limit also answers 413.
     request: { method: POST, target: /dump, body_size: 10485761, framing: chunked }
     expect: { status: 413, reaches_responder: false }
@@ -63,6 +64,7 @@ cases:
     tier: gateway
     source: "docs/design.md, both directions are buffered"
     level: MUST
+    transports: [h1, h2, h3]
     summary: A body above the in-memory limit spills to disk and arrives intact with exact CONTENT_LENGTH.
     request: { method: POST, target: /dump, body_size: 3145728, framing: chunked }
     expect: { status: 200, env: { CONTENT_LENGTH: "3145728" }, stdin_length: 3145728 }

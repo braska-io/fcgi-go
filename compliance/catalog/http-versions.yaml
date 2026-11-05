@@ -352,6 +352,7 @@ cases:
     tier: spec
     source: "RFC 3875 section 4.1.18"
     level: SHOULD
+    transports: [h1, h2, h3]
     summary: >-
       A lowercase field name, the only form h2/h3 allow, maps to the same
       upper-case HTTP_* name on every version.
@@ -790,6 +791,7 @@ cases:
     tier: spec
     source: "RFC 3875 sections 4.1.2 and 4.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: >-
       Chunked h1 and h2/h3 without content-length both reach the responder
       with CONTENT_LENGTH set to the decoded body length, the same as when
@@ -809,6 +811,7 @@ cases:
     tier: spec
     source: "RFC 3875 sections 4.1.2 and 4.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: >-
       A 3 MiB body without declared length (past the in-memory spool) still
       reaches the responder with the exact CONTENT_LENGTH and bytes on every
@@ -828,6 +831,7 @@ cases:
     tier: spec
     source: "RFC 3875 section 4.1.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: >-
       CONTENT_LENGTH is set if and only if the request has a body; a GET
       without one has no CONTENT_LENGTH on any version.
@@ -845,6 +849,7 @@ cases:
     tier: spec
     source: "RFC 9110 section 7.6.1"
     level: SHOULD
+    transports: [h1, h2, h3]
     summary: >-
       Transfer-Encoding is known to require removal; after the h1 chunked
       body is decoded no HTTP_TRANSFER_ENCODING reaches the responder, so h1
@@ -879,6 +884,7 @@ cases:
     tier: spec
     source: "RFC 3875 section 4.1.3"
     level: MUST
+    transports: [h1, h2, h3]
     summary: >-
       CONTENT_TYPE is set from the content-type field on every version,
       whatever the case of the field name on the wire.
@@ -1010,6 +1016,7 @@ cases:
     tier: spec
     source: "RFC 9110 section 10.1.1"
     level: MUST
+    transports: [h1, h2, h3]
     summary: >-
       A request with Expect: 100-continue gets a final status after the
       content is processed; the responder reads the whole body on every
