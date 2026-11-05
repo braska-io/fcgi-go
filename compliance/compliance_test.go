@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -95,6 +96,11 @@ func (g *fcgiGateway) Call(ctx context.Context, rt compliance.Route, req *compli
 	}
 	if body := req.Payload(); body != nil {
 		fr.Body, fr.ContentLength = bytes.NewReader(body), int64(len(body))
+		// A length-framed client sends this field, and Script sees it in
+		// r.Header; the equivalent Request carries it too.
+		if fr.Header.Get("Content-Length") == "" {
+			fr.Header.Set("Content-Length", strconv.Itoa(len(body)))
+		}
 	}
 
 	resp, err := g.gw.Caller(g.r.Script(rt.Script), options(rt)...).Call(ctx, fr)
