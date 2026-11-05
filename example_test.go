@@ -3,11 +3,13 @@ package fcgi_test
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 
 	fcgi "github.com/braska-io/fcgi-go"
@@ -64,4 +66,28 @@ func Example_perCallState() {
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api.php", nil))
 	fmt.Println(rec.Code, tokens.count())
 	// Output: 502 0
+}
+
+// A caller without an HTTP request runs a script through Call. A failure of
+// the library is an *Error with the status a Script handler would answer;
+// the responder's own status would be a Response instead.
+func Example_call() {
+	// No responder listens here, so the call fails as unreachable.
+	gw := fcgi.New("unix:/nonexistent/fpm.sock", fcgi.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	api := gw.Caller("api.php")
+
+	resp, err := api.Call(context.Background(), &fcgi.Request{
+		Method: "POST",
+		Target: "/api/v1/customer/7?x=1",
+		Body:   strings.NewReader(`{"name":"x"}`),
+		Params: map[string]string{"HTTP_X_AUTH_SUBJECT": "job-42"},
+	})
+	if err != nil {
+		var e *fcgi.Error
+		fmt.Println(errors.As(err, &e), e.Status, errors.Is(err, fcgi.ErrUnreachable))
+		return
+	}
+	defer resp.Body.Close()
+	fmt.Println(resp.Status)
+	// Output: true 502 true
 }

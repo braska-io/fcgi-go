@@ -51,13 +51,18 @@ func New(address string, opts ...GatewayOption) *Gateway {
 // Script returns the handler that runs the script name for every request.
 // Options given here override the gateway's for this script only.
 func (g *Gateway) Script(name string, opts ...ScriptOption) http.HandlerFunc {
+	cfg := g.scriptConfig(name, opts)
+	return func(w http.ResponseWriter, r *http.Request) {
+		g.serve(w, r, &cfg)
+	}
+}
+
+func (g *Gateway) scriptConfig(name string, opts []ScriptOption) config {
 	cfg := g.cfg.forScript(name)
 	for _, o := range opts {
 		o.applyScript(&cfg)
 	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		g.serve(w, r, &cfg)
-	}
+	return cfg
 }
 
 // Ping dials the responder and closes the connection without running a
