@@ -254,8 +254,8 @@ type Request struct {
 	TLS           bool        // sets HTTPS=on
 	Header        http.Header // becomes HTTP_* under the same rules as client headers
 	Body          io.Reader   // nil means no body
-	ContentLength int64       // -1 when unknown; the library spools and measures the body
-	PathInfo      *string     // nil derives PATH_INFO as Script does
+	ContentLength int64       // > 0 is checked against Body; 0 or -1 means unknown
+	PathInfo      *string     // replaces WithPathInfo; nil derives PATH_INFO as Script does
 	Params        map[string]string // stage 5 of the parameter order, written last
 }
 
@@ -273,11 +273,14 @@ func (c *Caller) Call(ctx context.Context, req *Request) (*Response, error)
 ### `Call` behaves as `Script` does for the same request
 
 - A `Caller` takes the same options as `Script`, with the same defaults and overrides. `WithParams` and `WithQuery` and `WithPathInfo` receive an `*http.Request` built from the `Request`, with `ctx` as its context, so one function serves both front ends.
+- A `Request.PathInfo` replaces the `WithPathInfo` function, which then does not run.
+- `SERVER_PORT` comes from the port in `Host`. Without one it is 443 under `TLS` and 80 otherwise.
 - `Request.Params` is written after the `WithParams` result. Both rank above every client-derived value.
 - `Request.Header` passes the rules of [Client headers cannot forge caller parameters](#client-headers-cannot-forge-caller-parameters). A protected name is dropped, and so is a name with `_` or `.`. A caller sets trusted values through `Params`, never through `Header`.
 - Slots, deadlines, spooling, `Shutdown` and stderr logging are those of `Script`. A `Call` and a `Script` request share the `WithMaxConns` slots.
 - `Call` returns after the whole response is in the spool. The responder worker is free before the caller reads `Body`. The caller must close `Body`. An unclosed body keeps its spool file.
 - The responder's own status is a `Response`, never an error. A PHP 500 is `Status: 500` with `err == nil`.
+- A reply to `HEAD`, or with a status that carries no body (1xx, 204, 304), has an empty `Body` and `ContentLength` 0.
 
 ### A failure of the library is a typed error, never a status
 
@@ -301,7 +304,7 @@ var (
 )
 ```
 
-`errors.Is(err, fcgi.ErrTimeout)` and `errors.Is(err, context.DeadlineExceeded)` both hold for a deadline. A cancelled `ctx` returns an error that wraps `context.Canceled` and is not an `*Error`, because no status was decided. The `Script` handler uses the same sentinels internally. Its observer's `CallInfo.Err` therefore matches them with `errors.Is` as well.
+`errors.Is(err, fcgi.ErrTimeout)` and `errors.Is(err, context.DeadlineExceeded)` both hold for a deadline. A cancelled `ctx` returns an error that wraps `context.Canceled` and is not an `*Error`, because no status was decided. A `Script` observer sees the same shape in `CallInfo.Err` on a client cancel. An empty or malformed `Target` returns a plain error before any call starts, and the observer does not run. The `Script` handler uses the same sentinels internally. Its observer's `CallInfo.Err` therefore matches them with `errors.Is` as well.
 
 ### The observer reports a `Call` once, before it returns
 
