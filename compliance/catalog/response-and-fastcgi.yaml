@@ -679,6 +679,7 @@ cases:
     tier: spec
     source: "FastCGI 1.0 sections 3.3 and 6.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A POST with Content-Length 0 yields a terminated, empty stdin stream."
     request:
       method: POST
@@ -757,6 +758,7 @@ cases:
     tier: spec
     source: "FastCGI 1.0 sections 3.3 and 6.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A 200,000-byte body sent without a length (chunked on h1, several DATA frames on h2/h3) arrives intact."
     request:
       method: POST
@@ -773,6 +775,7 @@ cases:
     tier: spec
     source: "FastCGI 1.0 section 6.2"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "The responder receives at most CONTENT_LENGTH bytes; for a chunked body CONTENT_LENGTH and the stdin length agree."
     request:
       method: POST

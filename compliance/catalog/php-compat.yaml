@@ -137,6 +137,7 @@ cases:
     tier: app
     source: "php.net Wrappers, php://input; docs/design.md (CONTENT_LENGTH is always exact, also for chunked bodies)"
     level: MUST
+    transports: [h1, h2, h3]
     summary: >-
       A chunked 1 MiB JSON POST reaches PHP with CONTENT_LENGTH 1048576 and
       1048576 bytes in php://input.
@@ -174,6 +175,7 @@ cases:
     tier: app
     source: "php.net ini.core, post_max_size; docs/design.md, WithMaxBody (10 MiB)"
     level: MUST
+    transports: [h1, h2, h3]
     summary: The same 9 MiB multipart body sent chunked also reaches PHP with its exact CONTENT_LENGTH.
     request:
       method: POST

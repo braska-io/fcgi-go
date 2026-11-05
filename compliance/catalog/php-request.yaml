@@ -365,6 +365,7 @@ cases:
     tier: app
     source: "php.net, $_POST (reserved.variables.post); docs/design.md, CONTENT_LENGTH is always exact"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A chunked form body reaches PHP with CONTENT_LENGTH and fills $_POST."
     request:
       method: POST
@@ -412,6 +413,7 @@ cases:
     tier: app
     source: "php.net, info.configuration, max_input_vars"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A chunked form body with 1001 variables arrives whole, so PHP raises the max_input_vars warning."
     request:
       method: POST
@@ -443,6 +445,7 @@ cases:
     tier: app
     source: "php.net, $_POST (reserved.variables.post)"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A chunked JSON body is complete in php://input."
     request:
       method: POST
@@ -474,6 +477,7 @@ cases:
     tier: app
     source: "php.net, $_POST (reserved.variables.post)"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A chunked text/plain body is complete in php://input."
     request:
       method: POST
@@ -503,6 +507,7 @@ cases:
     tier: app
     source: "php.net, php:// wrappers, php://input (wrappers.php)"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A 3 MiB body above the gateway's memory spool arrives intact in php://input."
     request:
       method: POST
@@ -549,6 +554,7 @@ cases:
     tier: app
     source: "php.net, ini.core, post_max_size"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A chunked body above post_max_size also leaves $_POST empty; PHP sees its exact CONTENT_LENGTH."
     request:
       method: POST
@@ -610,6 +616,7 @@ cases:
     tier: app
     source: "php.net, $_POST (reserved.variables.post)"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A chunked multipart body reaches PHP with CONTENT_LENGTH and is parsed."
     request:
       method: POST
@@ -776,6 +783,7 @@ cases:
     tier: app
     source: "php.net, POST method uploads (features.file-upload.post-method)"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "A chunked upload produces the same $_FILES entry."
     request:
       method: POST
@@ -1017,6 +1025,7 @@ cases:
     tier: app
     source: "php.net, POST method uploads (features.file-upload.post-method)"
     level: MUST
+    transports: [h1, h2, h3]
     summary: "The same binary file sent chunked is stored byte for byte."
     request:
       method: POST
@@ -1343,6 +1352,7 @@ cases:
     tier: app
     source: "php.net, getallheaders (function.getallheaders); docs/design.md, CONTENT_LENGTH is always exact"
     level: OBSERVED
+    transports: [h1, h2, h3]
     summary: "For a chunked body getallheaders() shows the exact Content-Length the gateway computed."
     request:
       method: POST
