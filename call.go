@@ -7,8 +7,10 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/braska-io/fcgi-go/internal/spool"
 )
@@ -135,7 +137,9 @@ func (c *Caller) newRequest(ctx context.Context, req *Request) (*http.Request, *
 	if req.TLS {
 		r.TLS = &tls.ConnectionState{}
 	}
-	r = r.WithContext(ctx)
+	// Script takes SERVER_PORT from the listener; a Call has none, so the
+	// port comes from Host, else from the scheme's default.
+	r = r.WithContext(context.WithValue(ctx, http.LocalAddrContextKey, serverAddr(r.Host, req.TLS)))
 
 	in := input{body: http.NoBody}
 	if req.Body != nil {
@@ -196,4 +200,19 @@ func (b *spoolBody) Close() error {
 	}
 	b.closed = true
 	return b.sp.Close()
+}
+
+// serverAddr is the local address a Call reports: the port of host when it
+// names one, else 443 under TLS and 80 without.
+func serverAddr(host string, isTLS bool) net.Addr {
+	port := 80
+	if isTLS {
+		port = 443
+	}
+	if _, p, err := net.SplitHostPort(host); err == nil {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 && n <= 65535 {
+			port = n
+		}
+	}
+	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
 }

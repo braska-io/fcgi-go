@@ -171,6 +171,7 @@ func TestCallDefaults(t *testing.T) {
 		"REQUEST_METHOD": "GET", "HTTP_HOST": "localhost", "SERVER_NAME": "localhost",
 		"REMOTE_ADDR": "127.0.0.1", "REMOTE_PORT": "0", "REQUEST_URI": "/a.php/x/y?q=1%2F",
 		"QUERY_STRING": "q=1%2F", "PATH_INFO": "/x/y", "SCRIPT_NAME": "/a.php", "CONTENT_LENGTH": "",
+		"SERVER_PORT": "80",
 	}
 	for k, v := range want {
 		if got[k] != v {
@@ -194,11 +195,23 @@ func TestCallRequestFieldsReachTheResponder(t *testing.T) {
 	want := map[string]string{
 		"REQUEST_METHOD": "DELETE", "HTTP_HOST": "example.org:8443", "SERVER_NAME": "example.org",
 		"REMOTE_ADDR": "10.1.2.3", "REMOTE_PORT": "5555", "HTTPS": "on", "HTTP_X_FOO": "bar",
+		"SERVER_PORT": "8443",
 	}
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("%s = %q, want %q", k, got[k], v)
 		}
+	}
+}
+
+// A Call has no listener: SERVER_PORT comes from Host, else the scheme.
+func TestCallServerPortWithTLSAndNoPortInHost(t *testing.T) {
+	cp := newCapture(t, replyWith("\r\nok"))
+	c := New(cp.addr, WithLogger(discardLogger())).Caller("a.php")
+	mustCall(t, c, &Request{Target: "/a.php", Host: "erp.example.com", TLS: true})
+
+	if got := cp.last(t).params["SERVER_PORT"]; got != "443" {
+		t.Errorf("SERVER_PORT = %q, want %q", got, "443")
 	}
 }
 
