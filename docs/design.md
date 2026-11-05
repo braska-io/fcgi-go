@@ -35,6 +35,7 @@ package fcgi
 
 func New(address string, opts ...GatewayOption) *Gateway
 func (g *Gateway) Script(name string, opts ...ScriptOption) http.HandlerFunc
+func (g *Gateway) Caller(name string, opts ...ScriptOption) *Caller
 func (g *Gateway) Ping(ctx context.Context) error
 func (g *Gateway) Shutdown(ctx context.Context) error
 ```
@@ -239,6 +240,76 @@ The `defer` releases the state on every path, including failures and panics.
 The observer is no replacement either, because it runs after the response.
 A script's `WithObserver` also replaces the gateway's, which would silently skip a release placed there.
 The package example `Example_perCallState` runs this pattern as a test.
+
+## A caller without an HTTP request runs a script through `Call`
+
+Some callers are not HTTP servers. A Go service calls a PHP endpoint on behalf of a job, an agent, or another handler. With only `Script`, such a caller fakes an `*http.Request` and records into an `http.ResponseWriter`. It learns what failed only from the library's 502 text. `Call` runs the same engine without either.
+
+```go
+type Request struct {
+	Method        string      // default GET
+	Target        string      // origin-form request-target, e.g. "/api/v1/customer/7?x=1"
+	Host          string      // HTTP_HOST and SERVER_NAME; default "localhost"
+	RemoteAddr    string      // "ip:port"; default "127.0.0.1:0"
+	TLS           bool        // sets HTTPS=on
+	Header        http.Header // becomes HTTP_* under the same rules as client headers
+	Body          io.Reader   // nil means no body
+	ContentLength int64       // -1 when unknown; the library spools and measures the body
+	PathInfo      *string     // nil derives PATH_INFO as Script does
+	Params        map[string]string // stage 5 of the parameter order, written last
+}
+
+type Response struct {
+	Status        int
+	Header        http.Header
+	Body          io.ReadCloser // reads the spooled output; Close releases the spool
+	ContentLength int64
+}
+
+func (g *Gateway) Caller(name string, opts ...ScriptOption) *Caller
+func (c *Caller) Call(ctx context.Context, req *Request) (*Response, error)
+```
+
+### `Call` behaves as `Script` does for the same request
+
+- A `Caller` takes the same options as `Script`, with the same defaults and overrides. `WithParams` and `WithQuery` and `WithPathInfo` receive an `*http.Request` built from the `Request`, with `ctx` as its context, so one function serves both front ends.
+- `Request.Params` is written after the `WithParams` result. Both rank above every client-derived value.
+- `Request.Header` passes the rules of [Client headers cannot forge caller parameters](#client-headers-cannot-forge-caller-parameters). A protected name is dropped, and so is a name with `_` or `.`. A caller sets trusted values through `Params`, never through `Header`.
+- Slots, deadlines, spooling, `Shutdown` and stderr logging are those of `Script`. A `Call` and a `Script` request share the `WithMaxConns` slots.
+- `Call` returns after the whole response is in the spool. The responder worker is free before the caller reads `Body`. The caller must close `Body`. An unclosed body keeps its spool file.
+- The responder's own status is a `Response`, never an error. A PHP 500 is `Status: 500` with `err == nil`.
+
+### A failure of the library is a typed error, never a status
+
+`Call` returns `(nil, err)` in every row of [the failure table](#a-cancelled-or-failed-call-closes-its-connection). `err` is an `*Error`:
+
+```go
+type Error struct {
+	Status int   // the status the Script handler answers in the same situation
+	Err    error // one of the sentinels below, possibly wrapping the cause
+}
+
+var (
+	ErrBodyTooLarge     = errors.New("fcgi: request body exceeds the limit")    // 413
+	ErrBadBody          = errors.New("fcgi: request body unreadable")           // 400
+	ErrUnreachable      = errors.New("fcgi: responder unreachable")             // 502
+	ErrNoSlot           = errors.New("fcgi: no free responder slot")            // 503
+	ErrTimeout          = errors.New("fcgi: deadline reached")                  // 504
+	ErrBadReply         = errors.New("fcgi: bad responder reply")               // 502
+	ErrResponseTooLarge = errors.New("fcgi: responder output exceeds the limit") // 502
+	ErrShuttingDown     = errors.New("fcgi: gateway shutting down")             // 503
+)
+```
+
+`errors.Is(err, fcgi.ErrTimeout)` and `errors.Is(err, context.DeadlineExceeded)` both hold for a deadline. A cancelled `ctx` returns an error that wraps `context.Canceled` and is not an `*Error`, because no status was decided. The `Script` handler uses the same sentinels internally. Its observer's `CallInfo.Err` therefore matches them with `errors.Is` as well.
+
+### The observer reports a `Call` once, before it returns
+
+`WithObserver` applies to a `Caller` too. It receives the `*http.Request` built from the `Request` and runs once, after the reply is spooled and before `Call` returns. `Origin` is `OriginResponder` for a `Response`, `OriginGateway` for an `*Error`, and `OriginClient` for a cancelled `ctx`. `ResponseBytes` counts the spooled body. `Duration` ends when the reply is spooled, because the library does not see the caller read.
+
+### The compliance suite proves the equivalence
+
+The suite gains a fourth transport, `call`. It runs each case through `Caller.Call` instead of an HTTP server and compares the result with the same expectation. The request maps one to one: `target`, `authority`, headers in order, body and route. The responder side of every case must hold unchanged. Cases about the HTTP server or the wire skip `call` through `transports`. Examples are `server`-tier cases, header case and chunked framing. For a gateway-origin status, the `call` transport checks the `*Error` and its `Status` instead of a response.
 
 ## Readiness never runs a script
 
