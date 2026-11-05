@@ -26,10 +26,12 @@ const (
 	H1 Transport = "h1"
 	H2 Transport = "h2"
 	H3 Transport = "h3"
+	// Call runs the route through the gateway's caller API, with no HTTP server.
+	Call Transport = "call"
 )
 
 // AllTransports is the default of a case without a transports list.
-var AllTransports = []Transport{H1, H2, H3}
+var AllTransports = []Transport{H1, H2, H3, Call}
 
 // Case is one request with its expected observation.
 type Case struct {
@@ -163,7 +165,7 @@ var (
 	idPattern  = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9.]+)*$`)
 	tiers      = map[string]bool{"spec": true, "gateway": true, "server": true, "app": true}
 	levels     = map[string]bool{"MUST": true, "SHOULD": true, "MAY": true, "OBSERVED": true}
-	transports = map[Transport]bool{H1: true, H2: true, H3: true}
+	transports = map[Transport]bool{H1: true, H2: true, H3: true, Call: true}
 	framings   = map[string]bool{"": true, "length": true, "chunked": true, "none": true}
 )
 

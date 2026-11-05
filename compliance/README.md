@@ -24,8 +24,9 @@ The suite serves the handler under test over TLS and sends each case as:
 - `h1`: HTTP/1.1 as raw bytes. Request-target, header order, header case, and chunked framing arrive exactly as written.
 - `h2`: HTTP/2, written frame by frame, so pseudo-headers, split `cookie` fields, and a missing `content-length` arrive exactly as written.
 - `h3`: HTTP/3. The schema accepts it; the suite marks these runs pending until the library adds HTTP/3.
+- `call`: no HTTP server. The suite runs the request through `Caller.Call`. Target, authority, headers, body and route map one to one onto `fcgi.Request` and the caller options. For a status the gateway decides, the suite checks the `*Error` and its `Status`.
 
-A case runs on every transport in `transports`, default `[h1, h2, h3]`. The expectation must hold unchanged on each, except fields that legitimately differ. Those cases restrict `transports` or use `env_match`.
+A case runs on every transport in `transports`, default `[h1, h2, h3, call]`. The expectation must hold unchanged on each, except fields that legitimately differ. Those cases restrict `transports` or use `env_match`. Cases about the HTTP server or the wire leave out `call`. Examples are `server`-tier cases, header name case, chunked or absent length framing, and `Expect`.
 
 ## The case schema
 
@@ -38,7 +39,7 @@ cases:
     source: "RFC 3875 section 4.1.12"       # document and section
     level: MUST                             # MUST | SHOULD | MAY | OBSERVED
     summary: REQUEST_METHOD carries the method name in the case the client sent.
-    transports: [h1, h2, h3]                # optional, default all three
+    transports: [h1, h2, h3, call]          # optional, default all four
     waived: ""                              # optional: why the project deliberately deviates
     request:
       method: POST
@@ -144,11 +145,11 @@ task compliance
 
 The task builds and starts the four reference responders with Docker Compose, then runs the Ginkgo suite against each. A responder that does not start fails the suite; it never skips.
 
-Each case carries its tier, its level, and its transport (`h1`, `h2`, `h3`) as Ginkgo labels. Pass Ginkgo flags after `--` to run a subset:
+Each case carries its tier, its level, and its transport (`h1`, `h2`, `h3`, `call`) as Ginkgo labels. Pass Ginkgo flags after `--` to run a subset:
 
 ```sh
 task compliance -- -ginkgo.focus "gw-protected-header-dropped"
-task compliance -- -ginkgo.label-filter "h2 && MUST"
+task compliance -- -ginkgo.label-filter "call && MUST"
 ```
 
 Stop the responders afterwards:
