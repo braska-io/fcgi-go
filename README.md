@@ -2,7 +2,7 @@
 
 fcgi-go is a Go library that passes HTTP requests to a FastCGI responder, such as php-fpm, and returns its response.
 You mount one `http.HandlerFunc` per script in your own router.
-Routing, rewrites, static files and authentication stay in your code.
+Routing, rewrites, static files, and authentication stay in your code.
 
 ## Mount one handler per script
 
@@ -51,6 +51,10 @@ func subjectFrom(r *http.Request) string { return "anonymous" }
 
 The address is `unix:<path>` or `tcp:<host:port>`.
 `WithProtectedHeaders("X-Auth-*")` drops client headers that start with `X-Auth-`, so only your code sets `HTTP_X_AUTH_SUBJECT`.
+
+A caller without an HTTP request, such as a job, runs a script with `gw.Caller("api.php").Call(ctx, &fcgi.Request{...})`.
+`Call` returns the responder's reply as a `*fcgi.Response`; the caller closes its `Body`.
+A failure of the library is an `*fcgi.Error` with a `Status` and one of the `fcgi.Err*` sentinels.
 
 [docs/design.md](docs/design.md) lists every option, its default, and the error statuses.
 [compliance/README.md](compliance/README.md) describes the compliance suite and how to run it.

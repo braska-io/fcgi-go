@@ -19,26 +19,6 @@ import (
 // maxStderrLog caps the responder stderr that reaches the log per call.
 const maxStderrLog = 8 << 10
 
-var (
-	errNoSlot   = errors.New("no free responder slot")
-	errBadReply = errors.New("bad responder reply")
-	errTooLarge = errors.New("responder output exceeds the response limit")
-	errClosing  = errors.New("gateway shutting down")
-)
-
-// statusError carries the HTTP status a failed call answers with.
-type statusError struct {
-	status int
-	err    error
-}
-
-func (e *statusError) Error() string { return e.err.Error() }
-func (e *statusError) Unwrap() error { return e.err }
-
-func fail(status int, format string, args ...any) *statusError {
-	return &statusError{status: status, err: fmt.Errorf(format, args...)}
-}
-
 // trace collects what the observer reports beyond the written response.
 type trace struct {
 	waitStart    time.Time
@@ -47,44 +27,60 @@ type trace struct {
 	writeErr     error
 }
 
+// input is the request body of a call and how to check it.
+type input struct {
+	// w lets net/http close the connection on an oversized body; nil for Call.
+	w    http.ResponseWriter
+	body io.Reader
+	// length is the declared body length, or -1 when unknown.
+	length int64
+	// strict makes a body of another length than length an error.
+	strict bool
+}
+
 func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, cfg *config) {
 	ow := &observedWriter{ResponseWriter: w}
 	var t trace
 	if !g.begin() {
-		http.Error(ow, errClosing.Error(), http.StatusServiceUnavailable)
-		g.observe(r, cfg, ow, &t, OriginGateway, errClosing)
+		http.Error(ow, "gateway shutting down", http.StatusServiceUnavailable)
+		g.observe(r, cfg, ow.status, ow.bytes, &t, OriginGateway, newError(http.StatusServiceUnavailable, ErrShuttingDown, nil))
 		return
 	}
 	defer g.inflight.Done()
 
 	origin, err := g.answer(ow, r, cfg, &t)
 	// After answer the slot is free, so a slow observer holds no worker.
-	g.observe(r, cfg, ow, &t, origin, err)
+	g.observe(r, cfg, ow.status, ow.bytes, &t, origin, err)
 }
 
 // answer runs the call and writes the library's status when it fails.
 func (g *Gateway) answer(w http.ResponseWriter, r *http.Request, cfg *config, t *trace) (Origin, error) {
-	err := g.handle(w, r, cfg, t)
-	if err == nil {
-		if t.writeErr != nil {
-			cfg.logger.WarnContext(r.Context(), "write response", "script", cfg.script, "error", t.writeErr)
+	in := input{
+		w:      w,
+		body:   r.Body,
+		length: r.ContentLength,
+		strict: r.Header.Get("Content-Length") != "" && r.ContentLength >= 0,
+	}
+	rep, err := g.run(r, cfg, in, t)
+	if err != nil {
+		origin, status, err := failure(r.Context(), err)
+		if origin == OriginClient {
+			// Nobody reads an answer.
+			return origin, err
 		}
-		return OriginResponder, t.writeErr
+		cfg.logger.WarnContext(r.Context(), "fcgi call failed", "script", cfg.script, "status", status, "error", err)
+		http.Error(w, http.StatusText(status), status)
+		return origin, err
 	}
-	if errors.Is(r.Context().Err(), context.Canceled) {
-		// Nobody reads an answer.
-		return OriginClient, fmt.Errorf("client left: %w: %w", r.Context().Err(), err)
+	defer rep.body.Close()
+	t.writeErr = writeResponse(w, r, cfg, rep)
+	if t.writeErr != nil {
+		cfg.logger.WarnContext(r.Context(), "write response", "script", cfg.script, "error", t.writeErr)
 	}
-	status := http.StatusBadGateway
-	if se, ok := errors.AsType[*statusError](err); ok {
-		status = se.status
-	}
-	cfg.logger.WarnContext(r.Context(), "fcgi call failed", "script", cfg.script, "status", status, "error", err)
-	http.Error(w, http.StatusText(status), status)
-	return OriginGateway, err
+	return OriginResponder, t.writeErr
 }
 
-func (g *Gateway) observe(r *http.Request, cfg *config, ow *observedWriter, t *trace, origin Origin, err error) {
+func (g *Gateway) observe(r *http.Request, cfg *config, status int, bytes int64, t *trace, origin Origin, err error) {
 	if cfg.observer == nil {
 		return
 	}
@@ -98,12 +94,12 @@ func (g *Gateway) observe(r *http.Request, cfg *config, ow *observedWriter, t *t
 	}()
 	info := CallInfo{
 		Script:        cfg.script,
-		Status:        ow.status,
+		Status:        status,
 		Origin:        origin,
 		Err:           err,
 		SlotWait:      t.slotWait,
 		RequestBytes:  t.requestBytes,
-		ResponseBytes: ow.bytes,
+		ResponseBytes: bytes,
 	}
 	if !t.waitStart.IsZero() {
 		info.Duration = time.Since(t.waitStart)
@@ -111,49 +107,46 @@ func (g *Gateway) observe(r *http.Request, cfg *config, ow *observedWriter, t *t
 	cfg.observer(r, info)
 }
 
-func (g *Gateway) handle(w http.ResponseWriter, r *http.Request, cfg *config, t *trace) error {
-	req, n, err := readBody(w, r, cfg)
+// run is the engine behind Script and Call: it spools the request body, waits
+// for a slot, runs the script and returns the spooled, parsed reply. The
+// caller closes the reply's body.
+func (g *Gateway) run(r *http.Request, cfg *config, in input, t *trace) (*reply, error) {
+	req, n, err := readBody(in, cfg)
 	t.requestBytes = n
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer req.Close()
 
 	ctx, cancel := context.WithTimeout(r.Context(), cfg.timeout)
 	defer cancel()
 
-	resp, err := g.call(ctx, r, cfg, req, t)
-	if err != nil {
-		return err
-	}
-	defer resp.body.Close()
-	t.writeErr = writeResponse(w, r, cfg, resp)
-	return nil
+	return g.call(ctx, r, cfg, req, t)
 }
 
 // readBody spools the request body so a slow client never holds a worker.
 // It also returns the bytes read, even when reading failed.
-func readBody(w http.ResponseWriter, r *http.Request, cfg *config) (*spool.Spool, int64, error) {
+func readBody(in input, cfg *config) (*spool.Spool, int64, error) {
 	sp := spool.New(cfg.spoolDir, cfg.spoolMemory)
-	if r.ContentLength > 0 && r.ContentLength <= cfg.maxBody {
+	if in.length > 0 && in.length <= cfg.maxBody {
 		// A failure here recurs on the first write and is reported there.
-		_ = sp.Expect(r.ContentLength)
+		_ = sp.Expect(in.length)
 	}
-	n, err := io.Copy(sp, http.MaxBytesReader(w, r.Body, cfg.maxBody))
-	if err == nil && r.Header.Get("Content-Length") != "" && r.ContentLength >= 0 && n != r.ContentLength {
+	n, err := io.Copy(sp, http.MaxBytesReader(in.w, io.NopCloser(in.body), cfg.maxBody))
+	if err == nil && in.strict && n != in.length {
 		// net/http enforces this on HTTP/1.1 and HTTP/2; quic-go's HTTP/3
 		// server only catches a body longer than declared. RFC 9114 section
 		// 4.1.2 makes either mismatch malformed, so it must not be forwarded.
-		err = fmt.Errorf("body is %d bytes, Content-Length says %d", n, r.ContentLength)
+		err = fmt.Errorf("body is %d bytes, Content-Length says %d", n, in.length)
 	}
 	if err == nil {
 		return sp, n, nil
 	}
 	_ = sp.Close()
 	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-		return nil, n, fail(http.StatusRequestEntityTooLarge, "request body exceeds %d bytes", cfg.maxBody)
+		return nil, n, newError(http.StatusRequestEntityTooLarge, ErrBodyTooLarge, fmt.Errorf("limit is %d bytes", cfg.maxBody))
 	}
-	return nil, n, fail(http.StatusBadRequest, "read request body: %w", err)
+	return nil, n, newError(http.StatusBadRequest, ErrBadBody, err)
 }
 
 type reply struct {
@@ -192,14 +185,14 @@ func (g *Gateway) acquire(ctx context.Context) (func(), error) {
 	case g.slots <- struct{}{}:
 		return func() { <-g.slots }, nil
 	case <-ctx.Done():
-		return nil, &statusError{status: http.StatusServiceUnavailable, err: fmt.Errorf("%w: %w", errNoSlot, ctx.Err())}
+		return nil, newError(http.StatusServiceUnavailable, ErrNoSlot, ctx.Err())
 	}
 }
 
 func (g *Gateway) roundTrip(ctx context.Context, r *http.Request, cfg *config, in, out *spool.Spool, stderr io.Writer) error {
 	conn, err := g.dialer.Dial(ctx)
 	if err != nil {
-		return classify(ctx, err)
+		return classify(ctx, err, ErrUnreachable)
 	}
 	params := cgi.Build(r, cgi.Config{
 		Script:       cfg.script,
@@ -214,14 +207,14 @@ func (g *Gateway) roundTrip(ctx context.Context, r *http.Request, cfg *config, i
 		HasBody:      hasBody(r, in),
 	})
 	res, err := fastcgi.Do(ctx, conn, params, in.Reader(0), in.Len(), &limitWriter{w: out, left: cfg.maxResponse}, stderr)
-	if errors.Is(err, errTooLarge) {
-		return fail(http.StatusBadGateway, "%w: %d bytes", errTooLarge, cfg.maxResponse)
+	if errors.Is(err, ErrResponseTooLarge) {
+		return newError(http.StatusBadGateway, ErrResponseTooLarge, fmt.Errorf("limit is %d bytes", cfg.maxResponse))
 	}
 	if err != nil {
-		return classify(ctx, err)
+		return classify(ctx, err, ErrBadReply)
 	}
 	if res.ProtocolStatus != 0 {
-		return fail(http.StatusBadGateway, "responder refused the request: protocol status %d", res.ProtocolStatus)
+		return newError(http.StatusBadGateway, ErrBadReply, fmt.Errorf("responder refused the request: protocol status %d", res.ProtocolStatus))
 	}
 	if res.AppStatus != 0 {
 		cfg.logger.WarnContext(r.Context(), "responder exited with non-zero status", "script", cfg.script, "app_status", res.AppStatus)
@@ -238,49 +231,50 @@ func hasBody(r *http.Request, in *spool.Spool) bool {
 	return in.Len() > 0 || framed || len(r.TransferEncoding) > 0 || r.Header.Get("Content-Length") != ""
 }
 
-func classify(ctx context.Context, err error) error {
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return &statusError{status: http.StatusGatewayTimeout, err: err}
-	}
-	return &statusError{status: http.StatusBadGateway, err: err}
-}
-
 func parseReply(out *spool.Spool) (*cgi.Response, error) {
 	parsed, err := cgi.ParseResponse(out.Reader(0))
 	if err != nil {
-		return nil, &statusError{status: http.StatusBadGateway, err: err}
+		return nil, newError(http.StatusBadGateway, ErrBadReply, err)
 	}
 	bodyLen := out.Len() - parsed.BodyOffset
 	for _, v := range parsed.Header.Values("Content-Length") {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || n != bodyLen {
-			return nil, fail(http.StatusBadGateway, "%w: content-length %q does not match %d body bytes", errBadReply, v, bodyLen)
+			return nil, newError(http.StatusBadGateway, ErrBadReply, fmt.Errorf("content-length %q does not match %d body bytes", v, bodyLen))
 		}
 	}
 	return parsed, nil
 }
 
-// writeResponse returns only the failure to write the body: the status is
-// sent by then, so the caller cannot answer anything else.
-func writeResponse(w http.ResponseWriter, r *http.Request, cfg *config, rep *reply) error {
+// applyHeader writes the reply's headers into h as the client sees them:
+// hop-by-hop and dropped headers removed, Content-Length computed from the
+// spooled body unless the responder or HEAD says otherwise.
+func applyHeader(h http.Header, cfg *config, rep *reply, method string) {
 	cgi.RemoveHopByHop(rep.parsed.Header)
-	h := w.Header()
 	for name, values := range rep.parsed.Header {
 		h[name] = values
 	}
 	for _, name := range cfg.dropHeaders {
 		h.Del(name)
 	}
+	// HEAD: php-fpm sends no body, so a length computed from the spool would
+	// be 0 and contradict the GET response.
+	if h.Get("Content-Length") == "" && bodyAllowed(rep.parsed.Status) && method != http.MethodHead {
+		h.Set("Content-Length", strconv.FormatInt(rep.bodyLen(), 10))
+	}
+}
+
+func (rep *reply) bodyLen() int64 { return rep.body.Len() - rep.parsed.BodyOffset }
+
+// writeResponse returns only the failure to write the body: the status is
+// sent by then, so the caller cannot answer anything else.
+func writeResponse(w http.ResponseWriter, r *http.Request, cfg *config, rep *reply) error {
+	h := w.Header()
+	applyHeader(h, cfg, rep, r.Method)
 	if _, ok := h["Content-Type"]; !ok {
 		// A nil entry stops net/http from sniffing a type the responder
 		// deliberately left out.
 		h["Content-Type"] = nil
-	}
-	bodyLen := rep.body.Len() - rep.parsed.BodyOffset
-	// HEAD: php-fpm sends no body, so a length computed from the spool would
-	// be 0 and contradict the GET response.
-	if h.Get("Content-Length") == "" && bodyAllowed(rep.parsed.Status) && r.Method != http.MethodHead {
-		h.Set("Content-Length", strconv.FormatInt(bodyLen, 10))
 	}
 	w.WriteHeader(rep.parsed.Status)
 	if r.Method == http.MethodHead || !bodyAllowed(rep.parsed.Status) {
@@ -349,7 +343,7 @@ type limitWriter struct {
 
 func (l *limitWriter) Write(p []byte) (int, error) {
 	if int64(len(p)) > l.left {
-		return 0, errTooLarge
+		return 0, ErrResponseTooLarge
 	}
 	l.left -= int64(len(p))
 	return l.w.Write(p)
